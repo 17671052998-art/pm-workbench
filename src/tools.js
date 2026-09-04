@@ -1,4 +1,5 @@
 const workerURL = new URL("./gif-worker.js", document.currentScript.src);
+workerURL.search = "v=edges-1";
 let cleanup = () => {};
 
 function render() {
@@ -10,12 +11,13 @@ function render() {
       <div class="tool-columns">
         <div class="tool-source">
           <h3>1. 选择 GIF</h3>
+          <label class="tool-preview-control">预览底色<select id="gifPreviewBackground"><option value="black">黑色（检查白边）</option><option value="checker">透明棋盘格</option><option value="white">白色（检查暗边）</option></select></label>
           <input id="gifFile" class="tool-file-input" type="file" accept=".gif,image/gif" aria-label="选择 GIF 文件" />
           <button id="gifDrop" class="tool-drop" type="button">
             <svg aria-hidden="true"><use href="#i-upload"></use></svg><strong>点击选择或拖入 GIF 文件</strong><span>单个文件不超过 20 MB</span>
           </button>
           <div id="gifPreviewBox" hidden>
-            <div class="tool-preview"><img id="gifPreview" alt="所选 GIF 动画预览" /></div>
+            <p class="tool-hint">原始 GIF 动画</p><div class="tool-preview"><img id="gifPreview" alt="所选原始 GIF 动画预览" /></div>
             <p id="gifFilename" class="tool-filename"></p><p id="gifMetadata" class="tool-hint"></p>
             <button id="gifReplace" class="btn secondary" type="button">重新选择</button>
           </div>
@@ -27,11 +29,13 @@ function render() {
           <p class="tool-hint">保持比例，不放大小尺寸图片。</p>
           <label class="form-label" for="gifFps">输出帧率<select id="gifFps"><option value="30">30 FPS（推荐）</option><option value="60">60 FPS</option><option value="20">20 FPS</option><option value="15">15 FPS</option></select></label>
           <p class="tool-hint">按原动画时长匹配播放节奏，时间精度受帧率影响；极短帧可能合并。</p>
+          <label class="form-label" for="gifEdgeMode">透明边缘处理<select id="gifEdgeMode"><option value="none">保留原始边缘</option><option value="soft">柔化锯齿</option><option value="white">去白边并柔化</option></select></label>
+          <p class="tool-hint">有浅色毛边时选「去白边并柔化」。仅处理透明轮廓附近，可能改变浅色外轮廓；请对照下方转换结果确认。</p>
           <p id="gifOutputHint" class="tool-output-hint">选择 GIF 后可查看预计输出信息。</p>
           <div class="tool-actions"><button id="gifConvert" class="btn primary" type="button" disabled>开始转换</button><button id="gifCancel" class="btn secondary" type="button" hidden>取消处理</button></div>
           <div id="gifProgressBox" class="tool-progress-box" hidden><progress id="gifProgress" max="100" value="0" aria-label="转换进度"></progress></div>
           <p id="gifStatus" class="tool-status" role="status" aria-live="polite">请先选择 GIF 文件。</p>
-          <div id="gifResult" class="tool-result" hidden><strong>转换完成</strong><p id="gifResultInfo"></p><a id="gifDownload" class="btn primary">下载 SVGA</a></div>
+          <div id="gifResult" class="tool-result" hidden><strong>转换完成</strong><p id="gifResultInfo"></p><p id="gifEdgeNotice"></p><label class="tool-preview-control">结果抽帧预览<select id="gifResultFrame"></select></label><div class="tool-preview tool-result-preview"><img id="gifResultPreview" alt="转换后 SVGA 的实际帧画面" /></div><p class="tool-hint">预览为导出文件中的实际帧；下载文件保留完整动画。</p><a id="gifDownload" class="btn primary">下载 SVGA</a></div>
         </div>
       </div>
       <div class="tool-notes"><strong>使用说明</strong><p>文件仅在当前浏览器中处理，不上传服务器。离开工具箱或退出登录会清除本次文件；转换完成后请下载保存。</p><p>输出为 SVGA 2.0 逐帧位图动画，不会自动转为矢量，文件可能增大。保留原图透明区域，不会自动去除实色背景；循环次数由使用方播放器设置。</p></div>
@@ -46,11 +50,13 @@ function mount(root) {
   let metadata = null;
   let previewURL = null;
   let downloadURL = null;
+  let resultPreviewURLs = [];
   let worker = null;
   let timer = null;
   let revision = 0;
   let disposed = false;
   let busy = false;
+  root.dataset.previewBackground = "black";
   const formatSize = (bytes) => bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 / 1024).toFixed(2)} MB`;
   const status = (text, error = false) => {
     $("gifStatus").textContent = text;
@@ -64,13 +70,17 @@ function mount(root) {
   }
   function setBusy(value) {
     busy = value;
-    ["gifSize", "gifFps", "gifReplace", "gifFile", "gifDrop"].forEach((id) => { $(id).disabled = value; });
+    ["gifSize", "gifFps", "gifEdgeMode", "gifReplace", "gifFile", "gifDrop"].forEach((id) => { $(id).disabled = value; });
     $("gifConvert").disabled = value || !metadata;
     $("gifCancel").hidden = !value;
     $("gifProgressBox").hidden = !value;
     $("gifConvert").textContent = value ? "处理中…" : "开始转换";
   }
   function clearResult() {
+    resultPreviewURLs.forEach((url) => URL.revokeObjectURL(url));
+    resultPreviewURLs = [];
+    $("gifResultPreview").removeAttribute("src");
+    $("gifResultFrame").replaceChildren();
     if (downloadURL) URL.revokeObjectURL(downloadURL);
     downloadURL = null;
     $("gifDownload").removeAttribute("href");
@@ -139,12 +149,19 @@ function mount(root) {
           $("gifDownload").href = downloadURL;
           $("gifDownload").download = `${selectedFile.name.replace(/\.gif$/i, "") || "animation"}.svga`;
           const info = data.info;
+          const labels = ["首帧", "中间帧", "末帧"];
+          data.previews.forEach((preview, index) => {
+            resultPreviewURLs.push(URL.createObjectURL(new Blob([preview.png], { type: "image/png" })));
+            $("gifResultFrame").add(new Option(`${labels[index]} · 第 ${preview.frame + 1} 帧`, String(index)));
+          });
+          $("gifResultPreview").src = resultPreviewURLs[0];
+          $("gifEdgeNotice").textContent = $("gifEdgeMode").value === "none" ? "已保留原始边缘。" : info.edgeApplied ? "已处理透明边缘，请切换底色检查效果。" : "未检测到可处理的透明边缘，边缘优化未生效；此工具不会去除实色背景。";
           $("gifResultInfo").textContent = `${formatSize(blob.size)} · ${info.width} × ${info.height} px · ${info.frames} 帧 · ${info.fps} FPS · ${(info.duration / 1000).toFixed(2)} 秒`;
           $("gifResult").hidden = false;
           status("转换成功，请下载保存 SVGA 文件。");
         }
       };
-      worker.postMessage({ buffer, inspect, options: { maxEdge: $("gifSize").value, fps: $("gifFps").value } }, [buffer]);
+      worker.postMessage({ buffer, inspect, options: { maxEdge: $("gifSize").value, fps: $("gifFps").value, edgeMode: $("gifEdgeMode").value } }, [buffer]);
     } catch {
       if (!disposed && job === revision) failure("无法读取文件或启动转换，请重新选择文件或更换浏览器。");
     }
@@ -184,7 +201,9 @@ function mount(root) {
     if (event.dataTransfer.files.length !== 1) return status("每次请选择一个 GIF 文件。", true);
     choose(event.dataTransfer.files[0]);
   });
-  ["gifSize", "gifFps"].forEach((id) => on($(id), "change", () => {
+  on($("gifPreviewBackground"), "change", () => { root.dataset.previewBackground = $("gifPreviewBackground").value; });
+  on($("gifResultFrame"), "change", () => { $("gifResultPreview").src = resultPreviewURLs[Number($("gifResultFrame").value)]; });
+  ["gifSize", "gifFps", "gifEdgeMode"].forEach((id) => on($(id), "change", () => {
     clearResult();
     updateOutputHint();
     status(metadata ? "参数已更新，请点击开始转换。" : "请先选择 GIF 文件。");
@@ -205,6 +224,9 @@ function mount(root) {
     controller.abort();
     if (previewURL) URL.revokeObjectURL(previewURL);
     if (downloadURL) URL.revokeObjectURL(downloadURL);
+    resultPreviewURLs.forEach((url) => URL.revokeObjectURL(url));
+    resultPreviewURLs = [];
+    delete root.dataset.previewBackground;
     selectedFile = null;
     metadata = null;
   };

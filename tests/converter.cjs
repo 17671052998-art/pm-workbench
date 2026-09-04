@@ -17,6 +17,7 @@ function fixture() {
 }
 
 async function main() {
+  await import("./edge-cleanup.mjs");
   const project = path.resolve(__dirname, "..");
   const server = http.createServer(async (request, response) => {
     try {
@@ -123,6 +124,51 @@ async function main() {
     });
     assert.deepEqual(dimensions, [240, 120, 240, 120]);
     console.log("PASS: aspect-preserving resize, encoded PNG dimensions and single-frame GIF.");
+
+    await page.locator("#gifEdgeMode").selectOption("white");
+    await page.locator("#gifConvert").click();
+    await page.locator("#gifResult").waitFor({ state: "visible" });
+    assert.match(await page.locator("#gifEdgeNotice").textContent(), /未检测到/);
+    const edgeGif = GIFEncoder();
+    const edgeIndices = new Uint8Array(21 * 21);
+    for (let y = 4; y <= 16; y++) for (let x = 4; x <= 16; x++) edgeIndices[y * 21 + x] = x === 4 || x === 16 || y === 4 || y === 16 ? 2 : 1;
+    for (let y = 9; y <= 11; y++) for (let x = 9; x <= 11; x++) edgeIndices[y * 21 + x] = 3;
+    edgeGif.writeFrame(edgeIndices, 21, 21, { palette: [[255, 255, 255], [20, 50, 90], [185, 194, 206], [255, 255, 255]], transparent: true, delay: 100 });
+    edgeGif.finish();
+    await page.locator("#gifFile").setInputFiles({ name: "white-edge.gif", mimeType: "image/gif", buffer: Buffer.from(edgeGif.bytes()) });
+    await page.waitForFunction(() => !document.querySelector("#gifConvert").disabled);
+    await page.locator("#gifConvert").click();
+    await page.locator("#gifResult").waitFor({ state: "visible" });
+    assert.match(await page.locator("#gifEdgeNotice").textContent(), /已处理/);
+    const edgePixels = await page.evaluate(async () => {
+      const item = await new Promise((resolve, reject) => new SVGA.Parser().load(document.querySelector("#gifDownload").href, resolve, reject));
+      const source = new Image();
+      source.src = "data:image/png;base64," + Object.values(item.images)[0];
+      await source.decode();
+      const canvas = document.createElement("canvas");
+      canvas.width = 21; canvas.height = 21;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(source, 0, 0);
+      const pixels = Array.from(ctx.getImageData(0, 0, 21, 21).data);
+      const result = document.querySelector("#gifResultPreview");
+      await result.decode();
+      ctx.clearRect(0, 0, 21, 21);
+      ctx.drawImage(result, 0, 0);
+      return { pixels, preview: Array.from(ctx.getImageData(0, 0, 21, 21).data) };
+    });
+    assert.deepEqual(edgePixels.preview, edgePixels.pixels);
+    const edgePixel = edgePixels.pixels.slice((4 * 21 + 10) * 4, (4 * 21 + 10) * 4 + 4);
+    assert.ok(edgePixel[1] < 65 && edgePixel[3] > 0 && edgePixel[3] < 160);
+    assert.deepEqual(edgePixels.pixels.slice((10 * 21 + 10) * 4, (10 * 21 + 10) * 4 + 4), [255, 255, 255, 255]);
+    await page.locator("#gifPreviewBackground").selectOption("white");
+    assert.equal(await page.locator("#gifResult").isVisible(), true);
+    assert.equal(await page.locator("#gifResultPreview").evaluate((img) => getComputedStyle(img.parentElement).backgroundColor), "rgb(255, 255, 255)");
+    await page.locator("#gifResultFrame").selectOption("2");
+    await page.locator("#gifPreviewBackground").selectOption("black");
+    await page.screenshot({ path: "/tmp/pm-workbench-edge-tools.png", fullPage: true });
+    await page.locator("#gifEdgeMode").selectOption("none");
+    assert.equal(await page.locator("#gifResult").isVisible(), false);
+    console.log("PASS: edge processing reaches exported SVGA, exact output preview, backdrop/frame controls, option invalidation and opaque-image notice.");
 
     await page.locator("#gifFile").setInputFiles({ ...input, buffer: input.buffer.subarray(0, input.buffer.length - 3) });
     await page.waitForFunction(() => document.querySelector("#gifStatus").classList.contains("is-error"));
