@@ -1,6 +1,7 @@
 // Work on a copy of the composited frame, never on the GIF disposal canvas.
-export function cleanEdges(image, mode) {
+export function cleanEdges(image, mode, trim = 1.5) {
   if (mode === "none") return false;
+  if (mode === "white") return trimAndSmooth(image, trim);
   const { width, height, data } = image;
   const count = width * height;
   const distance = new Uint8Array(count);
@@ -19,43 +20,6 @@ export function cleanEdges(image, mode) {
   for (let y = height - 1; y >= 0; y--) for (let x = width - 1; x >= 0; x--) {
     const i = y * width + x;
     distance[i] = Math.min(distance[i], x + 1 < width ? distance[i + 1] + 1 : 3, y + 1 < height ? distance[i + width] + 1 : 3);
-  }
-  if (mode === "white") {
-    const original = new Uint8ClampedArray(data);
-    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
-      const i = y * width + x;
-      const p = i * 4;
-      if (!distance[i] || distance[i] > 2 || !original[p + 3]) continue;
-      let reference = -1;
-      let bestDistance = Infinity;
-      for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) {
-        const nx = x + dx, ny = y + dy;
-        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
-        const n = ny * width + nx;
-        const squared = dx * dx + dy * dy;
-        if (distance[n] >= 3 && original[n * 4 + 3] === 255 && squared < bestDistance) {
-          reference = n * 4;
-          bestDistance = squared;
-        }
-      }
-      if (reference < 0) continue;
-      // Estimate coverage from C = alpha * foreground + (1 - alpha) * white.
-      // Reject edges inconsistent with this model instead of deleting every pale pixel.
-      let numerator = 0, denominator = 0;
-      for (let c = 0; c < 3; c++) {
-        const component = 255 - original[reference + c];
-        numerator += (255 - original[p + c]) * component;
-        denominator += component * component;
-      }
-      if (denominator < 3600) continue;
-      const coverage = Math.max(0, Math.min(1, numerator / denominator));
-      if (coverage > 0.97) continue;
-      let error = 0;
-      for (let c = 0; c < 3; c++) error = Math.max(error, Math.abs(original[p + c] - (coverage * original[reference + c] + (1 - coverage) * 255)));
-      if (error > 24) continue;
-      for (let c = 0; c < 3; c++) data[p + c] = original[reference + c];
-      data[p + 3] = Math.round(original[p + 3] * coverage);
-    }
   }
   const corrected = new Uint8ClampedArray(data);
   for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
@@ -81,6 +45,80 @@ export function cleanEdges(image, mode) {
       data[p] = red / alpha; data[p + 1] = green / alpha; data[p + 2] = blue / alpha;
     }
     if (!data[p + 3]) data[p] = data[p + 1] = data[p + 2] = 0;
+  }
+  return true;
+}
+
+function trimAndSmooth({ width, height, data }, trim) {
+  const count = width * height;
+  let alpha = new Float32Array(count);
+  let hasTransparent = false, hasContent = false;
+  for (let i = 0; i < count; i++) {
+    alpha[i] = data[i * 4 + 3];
+    hasTransparent ||= alpha[i] <= 8;
+    hasContent ||= alpha[i] > 8;
+  }
+  if (!hasTransparent || !hasContent) return false;
+  const amount = Math.max(1, Math.min(2, Number(trim) || 1.5));
+  // Choke at the final output resolution. This removes actual fringe pixels,
+  // including neutral flecks which a white-matte color fit cannot recognize.
+  for (let pass = 0; pass < Math.ceil(amount); pass++) {
+    const next = new Float32Array(count);
+    const strength = Math.min(1, amount - pass);
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+      let minimum = 255;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const nx = Math.max(0, Math.min(width - 1, x + dx));
+        const ny = Math.max(0, Math.min(height - 1, y + dy));
+        minimum = Math.min(minimum, alpha[ny * width + nx]);
+      }
+      const i = y * width + x;
+      next[i] = alpha[i] + (minimum - alpha[i]) * strength;
+    }
+    alpha = next;
+  }
+  const original = data.slice();
+  const trimmed = alpha.slice();
+  // Retain narrow colored strokes with no substantial interior nearby (for
+  // example a baseline or cord), rather than erasing them with the fringe.
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const i = y * width + x, p = i * 4;
+    if (!original[p + 3] || alpha[i] === original[p + 3]) continue;
+    const maximum = Math.max(original[p], original[p + 1], original[p + 2]);
+    const minimum = Math.min(original[p], original[p + 1], original[p + 2]);
+    if (maximum - minimum < 40 && maximum >= 100) continue;
+    let supported = false;
+    for (let dy = -3; dy <= 3 && !supported; dy++) for (let dx = -3; dx <= 3; dx++) {
+      const nx = x + dx, ny = y + dy;
+      if (nx >= 0 && ny >= 0 && nx < width && ny < height && trimmed[ny * width + nx] >= 250) { supported = true; break; }
+    }
+    if (!supported) alpha[i] = original[p + 3];
+  }
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    let coverage = 0, red = 0, green = 0, blue = 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const nx = Math.max(0, Math.min(width - 1, x + dx));
+      const ny = Math.max(0, Math.min(height - 1, y + dy));
+      const n = ny * width + nx;
+      const weight = (dx ? 1 : 2) * (dy ? 1 : 2);
+      const contribution = alpha[n] * weight;
+      coverage += contribution;
+      red += original[n * 4] * contribution;
+      green += original[n * 4 + 1] * contribution;
+      blue += original[n * 4 + 2] * contribution;
+    }
+    const p = (y * width + x) * 4;
+    const opacity = Math.round(coverage / 16);
+    data[p + 3] = opacity;
+    if (!opacity) {
+      data[p] = data[p + 1] = data[p + 2] = 0;
+    } else if (opacity < 255) {
+      // Filter premultiplied color with the cleaned mask, never blend the old
+      // white RGB back into the new antialiased contour. Interior RGB stays exact.
+      data[p] = red / coverage;
+      data[p + 1] = green / coverage;
+      data[p + 2] = blue / coverage;
+    }
   }
   return true;
 }

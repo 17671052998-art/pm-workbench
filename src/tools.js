@@ -1,5 +1,5 @@
 const workerURL = new URL("./gif-worker.js", document.currentScript.src);
-workerURL.search = "v=edges-1";
+workerURL.search = "v=edges-2";
 let cleanup = () => {};
 
 function render() {
@@ -30,7 +30,8 @@ function render() {
           <label class="form-label" for="gifFps">输出帧率<select id="gifFps"><option value="30">30 FPS（推荐）</option><option value="60">60 FPS</option><option value="20">20 FPS</option><option value="15">15 FPS</option></select></label>
           <p class="tool-hint">按原动画时长匹配播放节奏，时间精度受帧率影响；极短帧可能合并。</p>
           <label class="form-label" for="gifEdgeMode">透明边缘处理<select id="gifEdgeMode"><option value="none">保留原始边缘</option><option value="soft">柔化锯齿</option><option value="white">去白边并柔化</option></select></label>
-          <p class="tool-hint">有浅色毛边时选「去白边并柔化」。仅处理透明轮廓附近，可能改变浅色外轮廓；请对照下方转换结果确认。</p>
+          <p class="tool-hint">有碎白边时选「去白边并柔化」，会收缩残留边缘并重新生成平滑的半透明轮廓。</p>
+          <div id="gifEdgeTrimBox" hidden><label class="form-label" for="gifEdgeTrim">去边宽度<select id="gifEdgeTrim"><option value="1">1 px · 轻度</option><option value="1.5" selected>1.5 px · 标准（推荐）</option><option value="2">2 px · 较强</option></select></label><p class="tool-hint">以最终输出像素为准。轮廓会略微收缩，仍有残边可选 2 px；细小素材建议先用 1 px。</p></div>
           <p id="gifOutputHint" class="tool-output-hint">选择 GIF 后可查看预计输出信息。</p>
           <div class="tool-actions"><button id="gifConvert" class="btn primary" type="button" disabled>开始转换</button><button id="gifCancel" class="btn secondary" type="button" hidden>取消处理</button></div>
           <div id="gifProgressBox" class="tool-progress-box" hidden><progress id="gifProgress" max="100" value="0" aria-label="转换进度"></progress></div>
@@ -70,7 +71,7 @@ function mount(root) {
   }
   function setBusy(value) {
     busy = value;
-    ["gifSize", "gifFps", "gifEdgeMode", "gifReplace", "gifFile", "gifDrop"].forEach((id) => { $(id).disabled = value; });
+    ["gifSize", "gifFps", "gifEdgeMode", "gifEdgeTrim", "gifReplace", "gifFile", "gifDrop"].forEach((id) => { $(id).disabled = value; });
     $("gifConvert").disabled = value || !metadata;
     $("gifCancel").hidden = !value;
     $("gifProgressBox").hidden = !value;
@@ -155,13 +156,13 @@ function mount(root) {
             $("gifResultFrame").add(new Option(`${labels[index]} · 第 ${preview.frame + 1} 帧`, String(index)));
           });
           $("gifResultPreview").src = resultPreviewURLs[0];
-          $("gifEdgeNotice").textContent = $("gifEdgeMode").value === "none" ? "已保留原始边缘。" : info.edgeApplied ? "已处理透明边缘，请切换底色检查效果。" : "未检测到可处理的透明边缘，边缘优化未生效；此工具不会去除实色背景。";
+          $("gifEdgeNotice").textContent = $("gifEdgeMode").value === "none" ? "已保留原始边缘。" : info.edgeApplied ? $("gifEdgeMode").value === "white" ? `已按 ${$("gifEdgeTrim").value} px 去边并重建透明轮廓，请切换底色检查效果。` : "已柔化透明边缘，请切换底色检查效果。" : "未检测到可处理的透明边缘，边缘优化未生效；此工具不会去除实色背景。";
           $("gifResultInfo").textContent = `${formatSize(blob.size)} · ${info.width} × ${info.height} px · ${info.frames} 帧 · ${info.fps} FPS · ${(info.duration / 1000).toFixed(2)} 秒`;
           $("gifResult").hidden = false;
           status("转换成功，请下载保存 SVGA 文件。");
         }
       };
-      worker.postMessage({ buffer, inspect, options: { maxEdge: $("gifSize").value, fps: $("gifFps").value, edgeMode: $("gifEdgeMode").value } }, [buffer]);
+      worker.postMessage({ buffer, inspect, options: { maxEdge: $("gifSize").value, fps: $("gifFps").value, edgeMode: $("gifEdgeMode").value, edgeTrim: $("gifEdgeTrim").value } }, [buffer]);
     } catch {
       if (!disposed && job === revision) failure("无法读取文件或启动转换，请重新选择文件或更换浏览器。");
     }
@@ -203,7 +204,8 @@ function mount(root) {
   });
   on($("gifPreviewBackground"), "change", () => { root.dataset.previewBackground = $("gifPreviewBackground").value; });
   on($("gifResultFrame"), "change", () => { $("gifResultPreview").src = resultPreviewURLs[Number($("gifResultFrame").value)]; });
-  ["gifSize", "gifFps", "gifEdgeMode"].forEach((id) => on($(id), "change", () => {
+  ["gifSize", "gifFps", "gifEdgeMode", "gifEdgeTrim"].forEach((id) => on($(id), "change", () => {
+    $("gifEdgeTrimBox").hidden = $("gifEdgeMode").value !== "white";
     clearResult();
     updateOutputHint();
     status(metadata ? "参数已更新，请点击开始转换。" : "请先选择 GIF 文件。");

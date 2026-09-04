@@ -99,6 +99,55 @@ async function main() {
     assert.deepEqual(validation.pixels.frame_3, expected([[11, 4]]));
     console.log("PASS: downloaded SVGA, official player compatibility, transparency, patch compositing, disposal 1/2/3 and variable frame timing.");
 
+    // Optional local regression assets stay outside the public repository.
+    if (process.env.EDGE_ORIGINAL_SVGA && process.env.EDGE_FIXED_SVGA) {
+      const originalBytes = Array.from(await fs.readFile(process.env.EDGE_ORIGINAL_SVGA));
+      const fixedBytes = Array.from(await fs.readFile(process.env.EDGE_FIXED_SVGA));
+      const actual = await page.evaluate(async ({ originalBytes, fixedBytes }) => {
+        async function load(bytes) {
+          const url = URL.createObjectURL(new Blob([Uint8Array.from(bytes)]));
+          try { return await new Promise((resolve, reject) => new SVGA.Parser().load(url, resolve, reject)); }
+          finally { URL.revokeObjectURL(url); }
+        }
+        async function pixels(base64) {
+          const image = new Image();
+          image.src = "data:image/png;base64," + base64;
+          await image.decode();
+          const canvas = document.createElement("canvas");
+          canvas.width = image.width; canvas.height = image.height;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(image, 0, 0);
+          return { data: ctx.getImageData(0, 0, image.width, image.height).data, width: image.width, height: image.height };
+        }
+        function fringe({ data, width, height }) {
+          let total = 0;
+          for (let y = 2; y < height - 2; y++) for (let x = 2; x < width - 2; x++) {
+            const p = (y * width + x) * 4;
+            const max = Math.max(data[p], data[p + 1], data[p + 2]), min = Math.min(data[p], data[p + 1], data[p + 2]);
+            if (min < 120 || max - min > 35 || data[p + 3] < 8) continue;
+            let near = false;
+            for (let dy = -2; dy <= 2 && !near; dy++) for (let dx = -2; dx <= 2; dx++) if (data[((y + dy) * width + x + dx) * 4 + 3] < 8) { near = true; break; }
+            if (near) total += data[p + 3] / 255;
+          }
+          return total;
+        }
+        const original = await load(originalBytes), fixed = await load(fixedBytes);
+        const frames = [];
+        for (const key of Object.keys(original.images)) frames.push({ key, before: fringe(await pixels(original.images[key])), after: fringe(await pixels(fixed.images[key])) });
+        const playerHost = document.createElement("div");
+        playerHost.style.cssText = "width:240px;height:240px";
+        document.body.append(playerHost);
+        const player = new SVGA.Player(playerHost);
+        player.setVideoItem(fixed);
+        for (let i = 0; i < fixed.frames; i++) player.stepToFrame(i, false);
+        player.clear(); playerHost.remove();
+        return { frames, before: [original.videoSize, original.FPS, original.frames, original.sprites], after: [fixed.videoSize, fixed.FPS, fixed.frames, fixed.sprites] };
+      }, { originalBytes, fixedBytes });
+      assert.deepEqual(actual.after, actual.before);
+      for (const frame of actual.frames) if (frame.before > 10) assert.ok(frame.after < frame.before * 0.3, JSON.stringify(frame));
+      console.log("PASS: actual local animation, all-frame playback/timing and neutral fringe reduction", JSON.stringify(actual.frames));
+    }
+
     await page.locator("#gifFps").selectOption("60");
     assert.equal(await page.locator("#gifResult").isVisible(), false);
     await page.locator("#gifConvert").click();
@@ -139,7 +188,7 @@ async function main() {
     await page.waitForFunction(() => !document.querySelector("#gifConvert").disabled);
     await page.locator("#gifConvert").click();
     await page.locator("#gifResult").waitFor({ state: "visible" });
-    assert.match(await page.locator("#gifEdgeNotice").textContent(), /已处理/);
+    assert.match(await page.locator("#gifEdgeNotice").textContent(), /1.5 px 去边/);
     const edgePixels = await page.evaluate(async () => {
       const item = await new Promise((resolve, reject) => new SVGA.Parser().load(document.querySelector("#gifDownload").href, resolve, reject));
       const source = new Image();

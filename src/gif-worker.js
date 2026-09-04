@@ -45,7 +45,9 @@ async function convert({ gif, frames, info }, options) {
   const fps = Number(options.fps);
   const maxEdge = Number(options.maxEdge);
   const edgeMode = options.edgeMode || "none";
+  const edgeTrim = Number(options.edgeTrim || 1.5);
   if (!["none", "soft", "white"].includes(edgeMode)) fail("边缘处理参数无效，请重新选择。");
+  if (![1, 1.5, 2].includes(edgeTrim)) fail("去边宽度无效，请重新选择。");
   if (![15, 20, 30, 60].includes(fps) || ![0, 240, 480, 720].includes(maxEdge)) fail("转换参数无效，请重新选择。");
   const scale = maxEdge ? Math.min(1, maxEdge / Math.max(info.width, info.height)) : 1;
   const width = Math.max(1, Math.round(info.width * scale));
@@ -55,8 +57,6 @@ async function convert({ gif, frames, info }, options) {
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   const output = new OffscreenCanvas(width, height);
   const out = output.getContext("2d");
-  const processed = edgeMode !== "none" ? new OffscreenCanvas(info.width, info.height) : null;
-  const processedCtx = processed?.getContext("2d");
   const patch = new OffscreenCanvas(1, 1);
   const patchCtx = patch.getContext("2d");
   if (!ctx || !out || !patchCtx) fail("浏览器无法创建画布，请刷新或更换浏览器。");
@@ -96,15 +96,13 @@ async function convert({ gif, frames, info }, options) {
     elapsed += delayOf(frames[i]);
     const end = i === frames.length - 1 ? count : Math.round(elapsed * fps / 1000);
     if (end > start) {
-      let source = canvas;
-      if (processedCtx) {
-        const image = ctx.getImageData(0, 0, info.width, info.height);
-        edgeApplied = cleanEdges(image, edgeMode) || edgeApplied;
-        processedCtx.putImageData(image, 0, 0);
-        source = processed;
-      }
       out.clearRect(0, 0, width, height);
-      out.drawImage(source, 0, 0, width, height);
+      out.drawImage(canvas, 0, 0, width, height);
+      if (edgeMode !== "none") {
+        const image = out.getImageData(0, 0, width, height);
+        edgeApplied = cleanEdges(image, edgeMode, edgeTrim) || edgeApplied;
+        out.putImageData(image, 0, 0);
+      }
       const png = new Uint8Array(await (await output.convertToBlob({ type: "image/png" })).arrayBuffer());
       for (const preview of previews) if (preview.frame >= start && preview.frame < end) preview.png = png;
       imageBytes += png.length;
