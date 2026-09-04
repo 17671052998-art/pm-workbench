@@ -47,6 +47,10 @@ async function main() {
     await page.locator("#loginPassword").fill("admin");
     await page.locator("#loginForm").evaluate((form) => form.requestSubmit());
     await page.locator('[data-page="tools"]').click();
+    assert.equal(await page.locator("#gifUsage").inputValue(), "emoji");
+    assert.equal(await page.locator("#gifGeneralOptions").isVisible(), false);
+    assert.match(await page.locator("#gifOutputHint").textContent(), /20 帧 · 1.00 秒/);
+    await page.locator("#gifUsage").selectOption("general");
     assert.equal(await page.locator("#gifConvert").isDisabled(), true);
     const input = { name: "animation.gif", mimeType: "image/gif", buffer: fixture() };
     await page.locator("#gifFile").setInputFiles(input);
@@ -98,6 +102,24 @@ async function main() {
     assert.deepEqual(validation.pixels.frame_2, expected([[2, 3]]));
     assert.deepEqual(validation.pixels.frame_3, expected([[11, 4]]));
     console.log("PASS: downloaded SVGA, official player compatibility, transparency, patch compositing, disposal 1/2/3 and variable frame timing.");
+
+    await page.locator("#gifUsage").selectOption("emoji");
+    assert.equal(await page.locator("#gifResult").isVisible(), false);
+    assert.equal(await page.locator("#gifFps").isDisabled(), true);
+    await page.locator("#gifConvert").click();
+    await page.locator("#gifResult").waitFor({ state: "visible" });
+    const emoji = await page.evaluate(async () => {
+      const item = await new Promise((resolve, reject) => new SVGA.Parser().load(document.querySelector("#gifDownload").href, resolve, reject));
+      return { version: item.version, FPS: item.FPS, frames: item.frames, videoSize: item.videoSize, timeline: Array.from({ length: item.frames }, (_, frame) => item.sprites.filter((sprite) => sprite.frames[frame].alpha > 0).map((sprite) => sprite.imageKey)) };
+    });
+    assert.deepEqual({ ...emoji, timeline: undefined }, { version: "2.0", FPS: 20, frames: 20, videoSize: { width: 240, height: 240 }, timeline: undefined });
+    assert.deepEqual(emoji.timeline, [ ...Array(3).fill(["frame_0"]), ...Array(6).fill(["frame_1"]), ...Array(8).fill(["frame_2"]), ...Array(3).fill(["frame_3"]) ]);
+    assert.match(await page.locator("#gifResultInfo").textContent(), /240 × 240 px · 20 帧 · 20 FPS · 1.00 秒/);
+    await page.screenshot({ path: "/tmp/pm-workbench-emoji.png", fullPage: true });
+    await page.locator("#gifUsage").selectOption("general");
+    assert.equal(await page.locator("#gifFps").inputValue(), "30");
+    assert.equal(await page.locator("#gifFps").isDisabled(), false);
+    console.log("PASS: emoji default and exact SVGA 2.0 / 20 FPS / 20 frames / 240 square, proportional timing, preset invalidation and general settings restoration.");
 
     // Optional local regression assets stay outside the public repository.
     if (process.env.EDGE_ORIGINAL_SVGA && process.env.EDGE_FIXED_SVGA) {
@@ -173,6 +195,22 @@ async function main() {
     });
     assert.deepEqual(dimensions, [240, 120, 240, 120]);
     console.log("PASS: aspect-preserving resize, encoded PNG dimensions and single-frame GIF.");
+
+    await page.locator("#gifUsage").selectOption("emoji");
+    await page.locator("#gifConvert").click();
+    await page.locator("#gifResult").waitFor({ state: "visible" });
+    const letterbox = await page.evaluate(async () => {
+      const item = await new Promise((resolve, reject) => new SVGA.Parser().load(document.querySelector("#gifDownload").href, resolve, reject));
+      const image = new Image();
+      image.src = "data:image/png;base64," + Object.values(item.images)[0];
+      await image.decode();
+      const canvas = document.createElement("canvas"); canvas.width = canvas.height = 240;
+      const ctx = canvas.getContext("2d"); ctx.drawImage(image, 0, 0);
+      return { size: item.videoSize, fps: item.FPS, frames: item.frames, samples: [59, 60, 179, 180].map((y) => Array.from(ctx.getImageData(120, y, 1, 1).data)) };
+    });
+    assert.deepEqual(letterbox, { size: { width: 240, height: 240 }, fps: 20, frames: 20, samples: [[0, 0, 0, 0], [255, 0, 0, 255], [255, 0, 0, 255], [0, 0, 0, 0]] });
+    await page.locator("#gifUsage").selectOption("general");
+    console.log("PASS: non-square GIF letterboxed without distortion and static GIF held for all 20 frames.");
 
     await page.locator("#gifEdgeMode").selectOption("white");
     await page.locator("#gifConvert").click();

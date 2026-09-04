@@ -1,5 +1,5 @@
 const workerURL = new URL("./gif-worker.js", document.currentScript.src);
-workerURL.search = "v=edges-2";
+workerURL.search = "v=emoji-1";
 let cleanup = () => {};
 
 function render() {
@@ -25,10 +25,14 @@ function render() {
         </div>
         <div class="tool-settings">
           <h3>2. 设置与转换</h3>
+          <label class="form-label" for="gifUsage">用途类型<select id="gifUsage"><option value="emoji">表情包</option><option value="general">通用素材</option></select></label>
+          <div id="gifEmojiPreset"><p class="tool-output-hint">表情包标准：SVGA 2.0 · 240 × 240 px · 20 FPS · 20 帧</p><p class="tool-hint">固定 1 秒，按原动画各帧时长比例重采样。等比居中、透明补边，不裁切、不放大小尺寸素材。格式版本统一为 2.0，无需选择。</p></div>
+          <div id="gifGeneralOptions" hidden>
           <label class="form-label" for="gifSize">输出尺寸<select id="gifSize"><option value="720">最长边 720 px（推荐）</option><option value="480">最长边 480 px</option><option value="240">最长边 240 px</option><option value="0">保持原始尺寸</option></select></label>
           <p class="tool-hint">保持比例，不放大小尺寸图片。</p>
           <label class="form-label" for="gifFps">输出帧率<select id="gifFps"><option value="30">30 FPS（推荐）</option><option value="60">60 FPS</option><option value="20">20 FPS</option><option value="15">15 FPS</option></select></label>
           <p class="tool-hint">按原动画时长匹配播放节奏，时间精度受帧率影响；极短帧可能合并。</p>
+          </div>
           <label class="form-label" for="gifEdgeMode">透明边缘处理<select id="gifEdgeMode"><option value="none">保留原始边缘</option><option value="soft">柔化锯齿</option><option value="white">去白边并柔化</option></select></label>
           <p class="tool-hint">有碎白边时选「去白边并柔化」，会收缩残留边缘并重新生成平滑的半透明轮廓。</p>
           <div id="gifEdgeTrimBox" hidden><label class="form-label" for="gifEdgeTrim">去边宽度<select id="gifEdgeTrim"><option value="1">1 px · 轻度</option><option value="1.5" selected>1.5 px · 标准（推荐）</option><option value="2">2 px · 较强</option></select></label><p class="tool-hint">以最终输出像素为准。轮廓会略微收缩，仍有残边可选 2 px；细小素材建议先用 1 px。</p></div>
@@ -71,7 +75,8 @@ function mount(root) {
   }
   function setBusy(value) {
     busy = value;
-    ["gifSize", "gifFps", "gifEdgeMode", "gifEdgeTrim", "gifReplace", "gifFile", "gifDrop"].forEach((id) => { $(id).disabled = value; });
+    ["gifUsage", "gifSize", "gifFps", "gifEdgeMode", "gifEdgeTrim", "gifReplace", "gifFile", "gifDrop"].forEach((id) => { $(id).disabled = value; });
+    if ($("gifUsage").value === "emoji") { $("gifSize").disabled = true; $("gifFps").disabled = true; }
     $("gifConvert").disabled = value || !metadata;
     $("gifCancel").hidden = !value;
     $("gifProgressBox").hidden = !value;
@@ -88,6 +93,10 @@ function mount(root) {
     $("gifResult").hidden = true;
   }
   function updateOutputHint() {
+    if ($("gifUsage").value === "emoji") {
+      $("gifOutputHint").textContent = "输出：SVGA 2.0 · 240 × 240 px · 20 FPS · 20 帧 · 1.00 秒";
+      return;
+    }
     if (!metadata) {
       $("gifOutputHint").textContent = "选择 GIF 后可查看预计输出信息。";
       return;
@@ -162,7 +171,7 @@ function mount(root) {
           status("转换成功，请下载保存 SVGA 文件。");
         }
       };
-      worker.postMessage({ buffer, inspect, options: { maxEdge: $("gifSize").value, fps: $("gifFps").value, edgeMode: $("gifEdgeMode").value, edgeTrim: $("gifEdgeTrim").value } }, [buffer]);
+      worker.postMessage({ buffer, inspect, options: { usage: $("gifUsage").value, maxEdge: $("gifSize").value, fps: $("gifFps").value, edgeMode: $("gifEdgeMode").value, edgeTrim: $("gifEdgeTrim").value } }, [buffer]);
     } catch {
       if (!disposed && job === revision) failure("无法读取文件或启动转换，请重新选择文件或更换浏览器。");
     }
@@ -204,7 +213,11 @@ function mount(root) {
   });
   on($("gifPreviewBackground"), "change", () => { root.dataset.previewBackground = $("gifPreviewBackground").value; });
   on($("gifResultFrame"), "change", () => { $("gifResultPreview").src = resultPreviewURLs[Number($("gifResultFrame").value)]; });
-  ["gifSize", "gifFps", "gifEdgeMode", "gifEdgeTrim"].forEach((id) => on($(id), "change", () => {
+  ["gifUsage", "gifSize", "gifFps", "gifEdgeMode", "gifEdgeTrim"].forEach((id) => on($(id), "change", () => {
+    const emoji = $("gifUsage").value === "emoji";
+    $("gifEmojiPreset").hidden = !emoji;
+    $("gifGeneralOptions").hidden = emoji;
+    setBusy(busy);
     $("gifEdgeTrimBox").hidden = $("gifEdgeMode").value !== "white";
     clearResult();
     updateOutputHint();
@@ -220,6 +233,8 @@ function mount(root) {
     setBusy(false);
     status(metadata ? "已取消，可重新开始转换。" : "已取消，请重新选择 GIF。");
   });
+  updateOutputHint();
+  setBusy(false);
   cleanup = () => {
     disposed = true;
     stopWorker();

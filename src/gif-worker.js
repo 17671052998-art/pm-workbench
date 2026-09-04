@@ -42,17 +42,25 @@ function inspect(buffer) {
 
 async function convert({ gif, frames, info }, options) {
   if (typeof OffscreenCanvas === "undefined") fail("当前浏览器不支持转换，请使用新版 Chrome 或 Edge。");
-  const fps = Number(options.fps);
-  const maxEdge = Number(options.maxEdge);
+  const usage = options.usage || "general";
+  if (!["general", "emoji"].includes(usage)) fail("用途类型无效，请重新选择。");
+  const emoji = usage === "emoji";
+  const fps = emoji ? 20 : Number(options.fps);
+  const maxEdge = emoji ? 240 : Number(options.maxEdge);
   const edgeMode = options.edgeMode || "none";
   const edgeTrim = Number(options.edgeTrim || 1.5);
   if (!["none", "soft", "white"].includes(edgeMode)) fail("边缘处理参数无效，请重新选择。");
   if (![1, 1.5, 2].includes(edgeTrim)) fail("去边宽度无效，请重新选择。");
   if (![15, 20, 30, 60].includes(fps) || ![0, 240, 480, 720].includes(maxEdge)) fail("转换参数无效，请重新选择。");
   const scale = maxEdge ? Math.min(1, maxEdge / Math.max(info.width, info.height)) : 1;
-  const width = Math.max(1, Math.round(info.width * scale));
-  const height = Math.max(1, Math.round(info.height * scale));
-  const count = Math.max(1, Math.round(info.duration * fps / 1000));
+  const drawWidth = Math.max(1, Math.round(info.width * scale));
+  const drawHeight = Math.max(1, Math.round(info.height * scale));
+  const width = emoji ? 240 : drawWidth;
+  const height = emoji ? 240 : drawHeight;
+  const offsetX = Math.floor((width - drawWidth) / 2);
+  const offsetY = Math.floor((height - drawHeight) / 2);
+  const count = emoji ? 20 : Math.max(1, Math.round(info.duration * fps / 1000));
+  const timeScale = emoji ? count / info.duration : fps / 1000;
   const canvas = new OffscreenCanvas(info.width, info.height);
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   const output = new OffscreenCanvas(width, height);
@@ -92,12 +100,12 @@ async function convert({ gif, frames, info }, options) {
     patch.height = frame.dims.height;
     patchCtx.putImageData(new ImageData(frame.patch, patch.width, patch.height), 0, 0);
     ctx.drawImage(patch, frame.dims.left, frame.dims.top);
-    const start = Math.round(elapsed * fps / 1000);
+    const start = Math.round(elapsed * timeScale);
     elapsed += delayOf(frames[i]);
-    const end = i === frames.length - 1 ? count : Math.round(elapsed * fps / 1000);
+    const end = i === frames.length - 1 ? count : Math.round(elapsed * timeScale);
     if (end > start) {
       out.clearRect(0, 0, width, height);
-      out.drawImage(canvas, 0, 0, width, height);
+      out.drawImage(canvas, offsetX, offsetY, drawWidth, drawHeight);
       if (edgeMode !== "none") {
         const image = out.getImageData(0, 0, width, height);
         edgeApplied = cleanEdges(image, edgeMode, edgeTrim) || edgeApplied;
