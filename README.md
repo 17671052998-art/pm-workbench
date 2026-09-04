@@ -31,3 +31,31 @@ http://127.0.0.1:4173
 - 产品文档列表
 - 迭代看板
 - 模块内搜索与空状态
+- 工具箱：GIF 转 SVGA，支持拖拽选择、动画预览、尺寸和帧率设置、取消处理及下载
+
+## 工具箱
+
+登录后点击左侧「工具箱」，选择 GIF 并点击「开始转换」，完成后下载 `.svga` 文件。
+所有素材在浏览器本地处理，不上传服务器；离开工具箱会释放当前文件和转换任务。
+
+- 输出为 SVGA 2.0 逐帧位图动画，可能比原 GIF 更大，不是矢量化转换。
+- 保留透明区域，处理 GIF 局部帧和 disposal 1/2/3；实色背景不会自动移除。
+- 输出帧率可选 15/20/30/60 FPS，通过累计时长采样，时长误差不超过一帧；极短源帧可能合并。
+- GIF 未指定时长或小于 20 ms 的帧统一按 100 ms 处理。循环次数交由 SVGA 播放器控制。
+- 输入限制：20 MB、2048 × 2048 px、300 帧、30 秒；累计画布像素还受内存限制。
+- 转换需要支持 Worker 和 OffscreenCanvas 的现代浏览器，建议使用新版 Chrome / Edge。
+
+## 开发与验证
+
+```bash
+pnpm install
+pnpm build
+pnpm test
+```
+
+测试需要安装 Chrome，覆盖真实浏览器上传与下载、官方 SVGA 播放器解析、透明度、局部帧合成、帧时长、缩放、错误处理、取消与离开清理。
+`src/` 是工具源码，`assets/` 是构建产物和第三方许可证，需随源码提交以供 GitHub Pages 直接发布。
+GitHub Pages 从 `main` 分支根目录部署，不需要线上安装依赖。
+
+格式参考：[SVGA 官方协议](https://github.com/svga/SVGA-Format/blob/master/proto/svga.proto)。
+GIF 解析使用 [gifuct-js](https://github.com/matt-way/gifuct-js)，兼容性测试使用 [SVGAPlayer-Web](https://github.com/svga/SVGAPlayer-Web)。

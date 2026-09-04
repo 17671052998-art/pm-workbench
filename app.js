@@ -165,6 +165,7 @@ const pages = {
   prototype: { title: "产品原型", render: prototypePage },
   document: { title: "产品文档", render: documentPage },
   iteration: { title: "迭代管理", render: iterationPage },
+  tools: { title: "工具箱", render: () => window.OrbitTools.render() },
 };
 
 let currentPage = "dashboard";
@@ -187,6 +188,7 @@ const loginError = document.querySelector("#loginError");
 const rememberLogin = document.querySelector("#rememberLogin");
 
 function showLogin() {
+  window.OrbitTools.dispose();
   loginView.classList.remove("auth-hidden");
   appShell.classList.add("auth-hidden");
   loginPassword.value = "";
@@ -201,8 +203,10 @@ function showWorkbench() {
 }
 
 function render(page) {
+  window.OrbitTools.dispose();
   currentPage = page;
   root.innerHTML = pages[page].render();
+  if (page === "tools") window.OrbitTools.mount(root);
   crumb.textContent = pages[page].title;
   document.querySelector('.nav-item[data-page="prototype"] b').textContent = getPrototypeCount();
   document.querySelectorAll(".nav-item[data-page]").forEach((item) => item.classList.toggle("active", item.dataset.page === page));
