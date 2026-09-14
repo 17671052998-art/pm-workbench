@@ -5,9 +5,29 @@ let cleanup = () => {};
 function render() {
   return `
     <header class="page-head"><div><h1 class="page-title">工具箱</h1><p class="page-subtitle">处理产品工作中的常用素材，减少重复操作。</p></div><span class="badge green">本地处理 · 无需上传</span></header>
-    <div class="tool-catalog"><div class="tool-card"><span class="tool-format">GIF</span><div><h2>GIF 转 SVGA</h2><p>将 GIF 动画转换为可交付的 SVGA 文件</p></div><span class="badge green">可用</span></div></div>
-    <section class="panel tool-workspace" aria-labelledby="converterTitle">
-      <header class="panel-head"><div><h2 id="converterTitle">GIF 转 SVGA</h2><p>选择动画，设置输出参数，转换后下载。</p></div><span class="doc-tag">素材转换</span></header>
+    <section id="toolCatalog" class="tool-catalog" aria-labelledby="toolCatalogTitle">
+      <div class="tool-catalog-head"><div><h2 id="toolCatalogTitle">素材处理</h2><p>选择工具后进入操作页面</p></div><span>1 个工具</span></div>
+      <button id="gifToolOpen" class="tool-card" type="button" aria-label="打开 GIF 转 SVGA 工具">
+        <span class="tool-card-art" aria-hidden="true">
+          <svg class="tool-card-picture" viewBox="0 0 320 160" role="img">
+            <defs><linearGradient id="toolArtGradient" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#706ff8"/><stop offset="1" stop-color="#4f91ff"/></linearGradient></defs>
+            <rect width="320" height="160" rx="18" fill="url(#toolArtGradient)"/>
+            <circle cx="270" cy="28" r="44" fill="#fff" opacity=".08"/><circle cx="38" cy="144" r="58" fill="#fff" opacity=".06"/>
+            <rect x="38" y="34" width="92" height="92" rx="18" fill="#fff"/>
+            <rect x="51" y="48" width="66" height="48" rx="9" fill="#eceeff"/>
+            <circle cx="66" cy="63" r="7" fill="#ffba62"/><path d="m53 90 18-18 13 13 10-10 21 21H53Z" fill="#7777f6"/>
+            <rect x="57" y="105" width="54" height="9" rx="4.5" fill="#d9dcf7"/>
+            <path d="M145 80h31m-9-10 10 10-10 10" fill="none" stroke="#fff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+            <rect x="193" y="34" width="89" height="92" rx="18" fill="#17233e" opacity=".94"/>
+            <path d="m219 62 18 36 18-36" fill="none" stroke="#75e5bd" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+            <text x="237.5" y="113" fill="#fff" font-size="16" font-weight="700" text-anchor="middle">SVGA</text>
+          </svg>
+        </span>
+        <span class="tool-card-content"><span class="tool-card-title">GIF 转 SVGA</span><span class="tool-card-description">转换动画、处理透明边缘并导出 SVGA 2.0</span><span class="tool-card-meta"><span class="badge green">可用</span><span>进入工具 <b aria-hidden="true">→</b></span></span></span>
+      </button>
+    </section>
+    <section id="toolWorkspace" class="panel tool-workspace" aria-labelledby="converterTitle" hidden>
+      <header class="panel-head"><div class="tool-workspace-title"><button id="gifToolBack" class="tool-back" type="button" aria-label="返回工具箱">←</button><div><h2 id="converterTitle" tabindex="-1">GIF 转 SVGA</h2><p>选择动画，设置输出参数，转换后下载。</p></div></div><span class="doc-tag">素材转换</span></header>
       <div class="tool-columns">
         <div class="tool-source">
           <h3>1. 选择 GIF</h3>
@@ -61,6 +81,7 @@ function mount(root) {
   let revision = 0;
   let disposed = false;
   let busy = false;
+  let converterOpen = false;
   root.dataset.previewBackground = "black";
   const formatSize = (bytes) => bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 / 1024).toFixed(2)} MB`;
   const status = (text, error = false) => {
@@ -194,10 +215,25 @@ function mount(root) {
     if (!file.size) return status("文件为空，请重新选择 GIF。", true);
     run(true);
   }
+  function showConverter() {
+    converterOpen = true;
+    $("toolCatalog").hidden = true;
+    $("toolWorkspace").hidden = false;
+    $("converterTitle").focus();
+  }
+  function showCatalog() {
+    converterOpen = false;
+    $("toolWorkspace").hidden = true;
+    $("toolCatalog").hidden = false;
+    $("gifToolOpen").focus();
+  }
+  on($("gifToolOpen"), "click", showConverter);
+  on($("gifToolBack"), "click", showCatalog);
   on($("gifDrop"), "click", () => $("gifFile").click());
   on($("gifReplace"), "click", () => $("gifFile").click());
   on($("gifFile"), "change", (event) => choose(event.target.files[0]));
   on(root, "dragover", (event) => {
+    if (!converterOpen) return;
     event.preventDefault();
     if (!busy) $("gifDrop").classList.add("is-dragging");
   });
@@ -205,6 +241,7 @@ function mount(root) {
     if (!root.contains(event.relatedTarget)) $("gifDrop").classList.remove("is-dragging");
   });
   on(root, "drop", (event) => {
+    if (!converterOpen) return;
     event.preventDefault();
     $("gifDrop").classList.remove("is-dragging");
     if (busy) return;

@@ -47,6 +47,13 @@ async function main() {
     await page.locator("#loginPassword").fill("admin");
     await page.locator("#loginForm").evaluate((form) => form.requestSubmit());
     await page.locator('[data-page="tools"]').click();
+    assert.equal(await page.locator("#toolCatalog").isVisible(), true);
+    assert.equal(await page.locator("#toolWorkspace").isVisible(), false);
+    await page.locator("#gifToolOpen").click();
+    assert.equal(await page.locator("#toolWorkspace").isVisible(), true);
+    await page.locator("#gifToolBack").click();
+    assert.equal(await page.locator("#toolCatalog").isVisible(), true);
+    await page.locator("#gifToolOpen").click();
     assert.equal(await page.locator("#gifUsage").inputValue(), "emoji");
     assert.equal(await page.locator("#gifGeneralOptions").isVisible(), false);
     assert.match(await page.locator("#gifOutputHint").textContent(), /20 帧 · 1.00 秒/);
@@ -275,6 +282,7 @@ async function main() {
     assert.match(await page.locator("#gifStatus").textContent(), /已取消/);
     await page.evaluate(() => { document.querySelector("#gifConvert").click(); document.querySelector('[data-page="document"]').click(); });
     await page.locator('[data-page="tools"]').click();
+    await page.locator("#gifToolOpen").click();
     assert.equal(await page.locator("#gifConvert").isDisabled(), true);
     await page.locator("#logoutButton").click();
     assert.equal(await page.locator("#loginView").isVisible(), true);
