@@ -281,6 +281,33 @@ kbd { padding: 1px 4px; border: 1px solid #d9dde7; border-radius: 4px; color: #a
 .data-table td { padding: 13px 15px; border-top: 1px solid var(--line); color: #5c6579; font-size: 11px; }
 .data-table tr:hover td { background: #fcfcff; }
 .data-table .doc-title strong { color: var(--ink); }
+.account-summary { display: grid; grid-template-columns: repeat(3, minmax(150px, 220px)); gap: 14px; margin-bottom: 18px; }
+.account-summary article { padding: 16px 18px; border: 1px solid var(--line); border-radius: 12px; background: #fff; box-shadow: var(--shadow); }
+.account-summary small { display: block; color: var(--muted); font-size: 11px; }
+.account-summary strong { display: block; margin-top: 4px; font: 700 24px "DM Sans", sans-serif; }
+.account-layout { display: grid; grid-template-columns: 330px minmax(0, 1fr); align-items: start; gap: 18px; }
+.account-create { overflow: hidden; }
+.account-create .panel-head, .account-list .panel-head { border-bottom: 1px solid var(--line); padding: 18px 20px; }
+.account-form-body { padding: 4px 20px 20px; }
+.account-password-wrap { height: 39px; margin-top: 6px; background: #fff; }
+.account-password-wrap input { font-size: 12px; }
+.account-enabled { display: flex; align-items: center; gap: 7px; margin-top: 15px; color: #697287; font-size: 11px; }
+.account-enabled input { accent-color: var(--primary); }
+.form-error { min-height: 18px; margin: 10px 0 0; color: var(--red); font-size: 11px; }
+.account-submit { width: 100%; margin-top: 4px; }
+.account-submit:disabled { cursor: wait; opacity: .65; }
+.account-security-note { margin: 12px 0 0; color: var(--muted); font-size: 10px; line-height: 1.65; }
+.account-list { overflow: hidden; }
+.account-list .data-table th, .account-list .data-table td { white-space: nowrap; }
+.account-name { display: flex; align-items: center; gap: 9px; }
+.account-name .avatar { width: 30px; height: 30px; flex: 0 0 auto; font-size: 11px; }
+.account-name strong, .account-name small { display: block; }
+.account-name small { margin-top: 1px; color: var(--muted); font-size: 10px; }
+.account-actions { display: flex; gap: 8px; }
+.text-btn.danger { color: var(--red); }
+.account-protected { color: #a0a7b6; font-size: 11px; }
+.account-browser-note { display: flex; gap: 10px; margin-top: 18px; padding: 12px 15px; border: 1px solid #dfe3f7; border-radius: 9px; color: #677086; background: #f6f7ff; font-size: 11px; }
+.account-browser-note strong { flex: 0 0 auto; color: #4f5870; }
 .owner { display: inline-flex; align-items: center; gap: 6px; color: #5f687c; }
 .owner .avatar { width: 24px; height: 24px; font-size: 9px; }
 .status-tag { padding: 3px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; white-space: nowrap; }

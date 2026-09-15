@@ -21,7 +21,7 @@ const mockPreview = (version = "V2.4") => `
 
 const dashboardPage = () => `
   <header class="page-head">
-    <div><h1 class="page-title">上午好，林晓</h1><p class="page-subtitle">今天有 3 个产品事项等待你推进，保持节奏。</p></div>
+    <div><h1 class="page-title">上午好，${escapeHTML(getCurrentUserDisplayName())}</h1><p class="page-subtitle">今天有 3 个产品事项等待你推进，保持节奏。</p></div>
     <button class="btn primary create-btn">${icon("plus")} 新建内容</button>
   </header>
   <section class="stats-grid">
@@ -160,15 +160,60 @@ const iterationPage = () => `
   </section>
   <div class="empty-state"><strong>没有找到相关事项</strong><span>试试其他关键词。</span></div>`;
 
+const accountStorageKey = "orbit-managed-accounts";
+const getManagedAccounts = () => {
+  try {
+    const accounts = JSON.parse(localStorage.getItem(accountStorageKey) || "[]");
+    return Array.isArray(accounts) ? accounts : [];
+  } catch {
+    return [];
+  }
+};
+const saveManagedAccounts = (accounts) => localStorage.setItem(accountStorageKey, JSON.stringify(accounts));
+const normalizeUsername = (value) => value.trim().toLowerCase();
+const getCurrentUserDisplayName = () => currentUser === "admin" ? "管理员" : currentUser || "林晓";
+const formatAccountTime = (value) => value ? new Date(value).toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }) : "尚未登录";
+const accountSettingsPage = () => {
+  const accounts = getManagedAccounts();
+  const enabledCount = accounts.filter((account) => account.enabled).length + 1;
+  const rows = [
+    `<tr><td><span class="account-name"><span class="avatar">管</span><span><strong>admin</strong><small>系统管理员</small></span></span></td><td><span class="status-tag done">启用</span></td><td>系统内置</td><td>当前账号</td><td><span class="account-protected">不可操作</span></td></tr>`,
+    ...accounts.map((account) => `<tr data-account-row="${escapeHTML(account.id)}"><td><span class="account-name"><span class="avatar">${escapeHTML(account.username.slice(0, 1).toUpperCase())}</span><span><strong>${escapeHTML(account.username)}</strong><small>普通成员</small></span></span></td><td><span class="status-tag ${account.enabled ? "done" : "draft"}">${account.enabled ? "启用" : "已停用"}</span></td><td>${escapeHTML(formatAccountTime(account.createdAt))}</td><td>${escapeHTML(formatAccountTime(account.lastLogin))}</td><td><span class="account-actions"><button class="text-btn" type="button" data-account-action="toggle" data-account-id="${escapeHTML(account.id)}">${account.enabled ? "停用" : "启用"}</button><button class="text-btn danger" type="button" data-account-action="delete" data-account-id="${escapeHTML(account.id)}">删除</button></span></td></tr>`),
+  ];
+  return `
+    <header class="page-head"><div><h1 class="page-title">管理设置</h1><p class="page-subtitle">管理可登录工作台的账号及使用状态。</p></div><span class="badge green">仅管理员可见</span></header>
+    <section class="account-summary"><article><small>全部账号</small><strong>${accounts.length + 1}</strong></article><article><small>正常启用</small><strong>${enabledCount}</strong></article><article><small>已停用</small><strong>${accounts.length + 1 - enabledCount}</strong></article></section>
+    <section class="account-layout">
+      <form id="accountCreateForm" class="panel account-create" autocomplete="off">
+        <header class="panel-head"><div><h2>创建登录账号</h2><p>设置后可直接使用该账号和密码登录。</p></div></header>
+        <div class="account-form-body">
+          <label class="form-label" for="accountUsername">账号名称<input id="accountUsername" name="username" type="text" maxlength="30" placeholder="请输入账号名称" required /></label>
+          <label class="form-label" for="accountPassword">登录密码<span class="password-wrap account-password-wrap"><input id="accountPassword" name="password" type="password" minlength="6" maxlength="64" placeholder="至少 6 位" required /><button id="accountPasswordToggle" class="password-toggle" type="button">显示</button></span></label>
+          <label class="account-enabled"><input id="accountEnabled" type="checkbox" checked /> 创建后立即启用</label>
+          <p id="accountFormError" class="form-error" role="alert"></p>
+          <button class="btn primary account-submit" type="submit">${icon("plus")} 创建账号</button>
+          <p class="account-security-note">密码会经过加盐处理后保存在当前浏览器，不保存明文。</p>
+        </div>
+      </form>
+      <section class="data-panel account-list">
+        <header class="panel-head"><div><h2>登录账号</h2><p>共 ${accounts.length + 1} 个账号，可启用、停用或删除成员账号。</p></div></header>
+        <table class="data-table"><thead><tr><th>账号</th><th>状态</th><th>创建时间</th><th>最近登录</th><th>操作</th></tr></thead><tbody>${rows.join("")}</tbody></table>
+      </section>
+    </section>
+    <div class="account-browser-note"><strong>使用范围说明</strong><span>当前项目部署在 GitHub Pages，账号数据只保存在创建账号的这个浏览器中，不会同步到其他设备或浏览器。</span></div>`;
+};
+
 const pages = {
   dashboard: { title: "工作台", render: dashboardPage },
   prototype: { title: "产品原型", render: prototypePage },
   document: { title: "产品文档", render: documentPage },
   iteration: { title: "迭代管理", render: iterationPage },
   tools: { title: "工具箱", render: () => window.OrbitTools.render() },
+  settings: { title: "管理设置", render: accountSettingsPage },
 };
 
 let currentPage = "dashboard";
+let currentUser = null;
 const root = document.querySelector("#pageRoot");
 const crumb = document.querySelector("#crumbTitle");
 const modal = document.querySelector("#modalBackdrop");
@@ -186,9 +231,55 @@ const loginUsername = document.querySelector("#loginUsername");
 const loginPassword = document.querySelector("#loginPassword");
 const loginError = document.querySelector("#loginError");
 const rememberLogin = document.querySelector("#rememberLogin");
+const adminSettingsNav = document.querySelector("#adminSettingsNav");
+const profileAvatar = document.querySelector("#profileAvatar");
+const profileName = document.querySelector("#profileName");
+const profileRole = document.querySelector("#profileRole");
+
+function getSessionUsername() {
+  const value = localStorage.getItem("orbit-authenticated") || sessionStorage.getItem("orbit-authenticated");
+  return value === "true" ? "admin" : value;
+}
+
+function setSessionUsername(username, persistent) {
+  localStorage.removeItem("orbit-authenticated");
+  sessionStorage.removeItem("orbit-authenticated");
+  (persistent ? localStorage : sessionStorage).setItem("orbit-authenticated", username);
+}
+
+function updateCurrentUserUI() {
+  const admin = currentUser === "admin";
+  adminSettingsNav.hidden = !admin;
+  profileAvatar.textContent = admin ? "管" : (currentUser || "用").slice(0, 1).toUpperCase();
+  profileName.textContent = admin ? "管理员" : currentUser;
+  profileRole.textContent = admin ? "系统管理员" : "团队成员";
+}
+
+function isValidSessionUser(username) {
+  return username === "admin" || getManagedAccounts().some((account) => account.username === username && account.enabled);
+}
+
+function bytesToHex(bytes) {
+  return Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function hashAccountPassword(password, saltHex) {
+  const encoder = new TextEncoder();
+  const salt = Uint8Array.from(saltHex.match(/.{2}/g), (value) => parseInt(value, 16));
+  const material = await crypto.subtle.importKey("raw", encoder.encode(password), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", salt, iterations: 120000, hash: "SHA-256" }, material, 256);
+  return bytesToHex(bits);
+}
+
+function createSalt() {
+  const salt = new Uint8Array(16);
+  crypto.getRandomValues(salt);
+  return bytesToHex(salt);
+}
 
 function showLogin() {
   window.OrbitTools.dispose();
+  currentUser = null;
   loginView.classList.remove("auth-hidden");
   appShell.classList.add("auth-hidden");
   loginPassword.value = "";
@@ -199,10 +290,15 @@ function showLogin() {
 function showWorkbench() {
   loginView.classList.add("auth-hidden");
   appShell.classList.remove("auth-hidden");
+  updateCurrentUserUI();
   render("dashboard");
 }
 
 function render(page) {
+  if (page === "settings" && currentUser !== "admin") {
+    page = "dashboard";
+    showToast("仅管理员可以访问管理设置");
+  }
   window.OrbitTools.dispose();
   currentPage = page;
   root.innerHTML = pages[page].render();
@@ -267,6 +363,69 @@ document.addEventListener("click", (event) => {
     chip.parentElement.querySelectorAll(".filter-chip").forEach((item) => item.classList.remove("active"));
     chip.classList.add("active");
   }
+  if (event.target.closest("#accountPasswordToggle")) {
+    const input = root.querySelector("#accountPassword");
+    const showPassword = input.type === "password";
+    input.type = showPassword ? "text" : "password";
+    event.target.closest("#accountPasswordToggle").textContent = showPassword ? "隐藏" : "显示";
+  }
+  const accountAction = event.target.closest("[data-account-action]");
+  if (accountAction && currentUser === "admin") {
+    const accounts = getManagedAccounts();
+    const account = accounts.find((item) => item.id === accountAction.dataset.accountId);
+    if (!account) return;
+    if (accountAction.dataset.accountAction === "toggle") {
+      account.enabled = !account.enabled;
+      saveManagedAccounts(accounts);
+      render("settings");
+      showToast(`${account.username} 已${account.enabled ? "启用" : "停用"}`);
+    }
+    if (accountAction.dataset.accountAction === "delete" && window.confirm(`确认删除账号“${account.username}”吗？删除后将无法登录。`)) {
+      saveManagedAccounts(accounts.filter((item) => item.id !== account.id));
+      render("settings");
+      showToast(`${account.username} 已删除`);
+    }
+  }
+});
+
+document.addEventListener("submit", async (event) => {
+  if (!event.target.matches("#accountCreateForm")) return;
+  event.preventDefault();
+  if (currentUser !== "admin") return;
+  const usernameInput = root.querySelector("#accountUsername");
+  const passwordInput = root.querySelector("#accountPassword");
+  const error = root.querySelector("#accountFormError");
+  const username = normalizeUsername(usernameInput.value);
+  const password = passwordInput.value;
+  if (!/^[a-z0-9._-]{3,30}$/.test(username)) {
+    error.textContent = "账号需为 3-30 位字母、数字、点、下划线或短横线。";
+    usernameInput.focus();
+    return;
+  }
+  if (username === "admin" || getManagedAccounts().some((account) => account.username === username)) {
+    error.textContent = "该账号已存在，请更换账号名称。";
+    usernameInput.focus();
+    return;
+  }
+  if (password.length < 6) {
+    error.textContent = "密码至少需要 6 位。";
+    passwordInput.focus();
+    return;
+  }
+  const submit = event.target.querySelector("button[type=submit]");
+  submit.disabled = true;
+  submit.textContent = "正在创建…";
+  try {
+    const salt = createSalt();
+    const account = { id: crypto.randomUUID(), username, salt, passwordHash: await hashAccountPassword(password, salt), enabled: root.querySelector("#accountEnabled").checked, createdAt: new Date().toISOString(), lastLogin: null };
+    saveManagedAccounts([...getManagedAccounts(), account]);
+    render("settings");
+    showToast(`${username} 创建成功`);
+  } catch {
+    submit.disabled = false;
+    submit.textContent = "创建账号";
+    error.textContent = "账号创建失败，请刷新页面后重试。";
+  }
 });
 
 document.addEventListener("input", (event) => {
@@ -306,13 +465,29 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
-loginForm.addEventListener("submit", (event) => {
+loginForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (loginUsername.value.trim() === "admin" && loginPassword.value === "admin") {
-    if (rememberLogin.checked) localStorage.setItem("orbit-authenticated", "true");
-    else sessionStorage.setItem("orbit-authenticated", "true");
+  const username = normalizeUsername(loginUsername.value);
+  const password = loginPassword.value;
+  let authenticated = username === "admin" && password === "admin";
+  let account = null;
+  if (!authenticated) {
+    account = getManagedAccounts().find((item) => item.username === username);
+    if (account && !account.enabled) {
+      loginError.textContent = "该账号已停用，请联系管理员。";
+      return;
+    }
+    if (account) authenticated = account.passwordHash === await hashAccountPassword(password, account.salt);
+  }
+  if (authenticated) {
+    currentUser = username;
+    setSessionUsername(username, rememberLogin.checked);
+    if (account) {
+      account.lastLogin = new Date().toISOString();
+      saveManagedAccounts(getManagedAccounts().map((item) => item.id === account.id ? account : item));
+    }
     showWorkbench();
-    showToast("管理员登录成功");
+    showToast(username === "admin" ? "管理员登录成功" : `${username} 登录成功`);
     return;
   }
   loginError.textContent = "账号或密码错误，请重新输入。";
@@ -331,8 +506,12 @@ document.querySelector("#logoutButton").addEventListener("click", () => {
   showLogin();
 });
 
-if (localStorage.getItem("orbit-authenticated") === "true" || sessionStorage.getItem("orbit-authenticated") === "true") {
+const restoredUsername = getSessionUsername();
+if (restoredUsername && isValidSessionUser(restoredUsername)) {
+  currentUser = restoredUsername;
   showWorkbench();
 } else {
+  localStorage.removeItem("orbit-authenticated");
+  sessionStorage.removeItem("orbit-authenticated");
   showLogin();
 }

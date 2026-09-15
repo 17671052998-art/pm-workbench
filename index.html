@@ -11,7 +11,7 @@
       href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=tool-catalog-1" />
+    <link rel="stylesheet" href="./styles.css?v=account-settings-1" />
   </head>
   <body>
     <svg class="svg-defs" aria-hidden="true">
@@ -130,6 +130,9 @@
         </nav>
 
         <div class="sidebar-bottom">
+          <button class="nav-item admin-only" data-page="settings" id="adminSettingsNav" hidden>
+            <svg><use href="#i-users"></use></svg><span>管理设置</span>
+          </button>
           <button class="nav-item">
             <svg><use href="#i-setting"></use></svg><span>空间设置</span>
           </button>
@@ -152,7 +155,7 @@
           <div class="top-actions">
             <button class="icon-btn bell" aria-label="通知"><svg><use href="#i-bell"></use></svg><span></span></button>
             <button class="help-btn">?</button>
-            <div class="profile"><span>林</span><div><strong>林晓</strong><small>产品负责人</small></div></div>
+            <div class="profile"><span id="profileAvatar">林</span><div><strong id="profileName">林晓</strong><small id="profileRole">产品负责人</small></div></div>
             <button class="logout-btn" id="logoutButton">退出</button>
           </div>
         </header>
@@ -184,6 +187,6 @@
 
     <div class="toast" id="toast"><svg><use href="#i-check"></use></svg><span>创建成功</span></div>
     <script src="./assets/tools.js?v=tool-catalog-1"></script>
-    <script src="./app.js"></script>
+    <script src="./app.js?v=account-settings-1"></script>
   </body>
 </html>
