@@ -1,3 +1,5 @@
+import { mountBackgroundTool } from "./background-remove.js";
+
 const workerURL = new URL("./gif-worker.js", document.currentScript.src);
 workerURL.search = "v=emoji-1";
 let cleanup = () => {};
@@ -6,7 +8,8 @@ function render() {
   return `
     <header class="page-head"><div><h1 class="page-title">工具箱</h1><p class="page-subtitle">处理产品工作中的常用素材，减少重复操作。</p></div><span class="badge green">本地处理 · 无需上传</span></header>
     <section id="toolCatalog" class="tool-catalog" aria-labelledby="toolCatalogTitle">
-      <div class="tool-catalog-head"><div><h2 id="toolCatalogTitle">素材处理</h2><p>选择工具后进入操作页面</p></div><span>1 个工具</span></div>
+      <div class="tool-catalog-head"><div><h2 id="toolCatalogTitle">素材处理</h2><p>选择工具后进入操作页面</p></div><span>2 个工具</span></div>
+      <div class="tool-catalog-grid">
       <button id="gifToolOpen" class="tool-card" type="button" aria-label="打开 GIF 转 SVGA 工具">
         <span class="tool-card-art" aria-hidden="true">
           <svg class="tool-card-picture" viewBox="0 0 320 160" role="img">
@@ -25,6 +28,22 @@ function render() {
         </span>
         <span class="tool-card-content"><span class="tool-card-title">GIF 转 SVGA</span><span class="tool-card-description">转换动画、处理透明边缘并导出 SVGA 2.0</span><span class="tool-card-meta"><span class="badge green">可用</span><span>进入工具 <b aria-hidden="true">→</b></span></span></span>
       </button>
+      <button id="bgToolOpen" class="tool-card" type="button" aria-label="打开移除背景工具">
+        <span class="tool-card-art" aria-hidden="true">
+          <svg class="tool-card-picture" viewBox="0 0 320 160" role="img">
+            <defs><linearGradient id="bgArtGradient" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#49b4af"/><stop offset="1" stop-color="#686ef1"/></linearGradient><pattern id="bgArtChecks" width="12" height="12" patternUnits="userSpaceOnUse"><rect width="12" height="12" fill="#fff"/><path d="M0 0h6v6H0zm6 6h6v6H6z" fill="#e7e9f0"/></pattern></defs>
+            <rect width="320" height="160" rx="18" fill="url(#bgArtGradient)"/>
+            <circle cx="38" cy="146" r="58" fill="#fff" opacity=".07"/><circle cx="275" cy="17" r="44" fill="#fff" opacity=".08"/>
+            <rect x="47" y="27" width="95" height="106" rx="14" fill="#f8f8ff"/><rect x="57" y="37" width="75" height="86" rx="8" fill="#d9dcf1"/>
+            <circle cx="95" cy="67" r="15" fill="#f7bf9b"/><path d="M64 114c3-23 15-36 31-36s28 13 31 36" fill="#f3698b"/>
+            <path d="M155 80h29m-9-9 10 9-10 9" fill="none" stroke="#fff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+            <rect x="198" y="27" width="95" height="106" rx="14" fill="url(#bgArtChecks)"/>
+            <circle cx="245" cy="67" r="15" fill="#f7bf9b"/><path d="M214 114c3-23 15-36 31-36s28 13 31 36" fill="#f3698b"/>
+          </svg>
+        </span>
+        <span class="tool-card-content"><span class="tool-card-title">移除图片背景</span><span class="tool-card-description">自动去除相近色背景，手动选区精修透明边缘</span><span class="tool-card-meta"><span class="badge green">可用</span><span>进入工具 <b aria-hidden="true">→</b></span></span></span>
+      </button>
+      </div>
     </section>
     <section id="toolWorkspace" class="panel tool-workspace" aria-labelledby="converterTitle" hidden>
       <header class="panel-head"><div class="tool-workspace-title"><button id="gifToolBack" class="tool-back" type="button" aria-label="返回工具箱">←</button><div><h2 id="converterTitle" tabindex="-1">GIF 转 SVGA</h2><p>选择动画，设置输出参数，转换后下载。</p></div></div><span class="doc-tag">素材转换</span></header>
@@ -64,6 +83,41 @@ function render() {
         </div>
       </div>
       <div class="tool-notes"><strong>使用说明</strong><p>文件仅在当前浏览器中处理，不上传服务器。离开工具箱或退出登录会清除本次文件；转换完成后请下载保存。</p><p>输出为 SVGA 2.0 逐帧位图动画，不会自动转为矢量，文件可能增大。保留原图透明区域，不会自动去除实色背景；循环次数由使用方播放器设置。</p></div>
+    </section>
+    <section id="bgWorkspace" class="panel tool-workspace bg-workspace" aria-labelledby="bgTitle" hidden>
+      <header class="panel-head"><div class="tool-workspace-title"><button id="bgToolBack" class="tool-back" type="button" aria-label="返回工具箱">←</button><div><h2 id="bgTitle" tabindex="-1">移除图片背景</h2><p>自动去除相近色背景，再通过选区和画笔修正。</p></div></div><span class="doc-tag">图片处理</span></header>
+      <div class="bg-columns">
+        <div class="bg-preview-column">
+          <div class="bg-preview-head"><div><h3>图片预览</h3><p id="bgFileName">尚未选择图片</p></div><label class="tool-preview-control">预览底色<select id="bgPreviewBackground"><option value="checker">透明棋盘格</option><option value="black">黑色</option><option value="white">白色</option></select></label></div>
+          <input id="bgFile" class="tool-file-input" type="file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp" aria-label="选择要移除背景的图片" />
+          <div id="bgDrop" class="bg-stage">
+            <div id="bgEmpty" class="bg-empty"><svg aria-hidden="true"><use href="#i-upload"></use></svg><strong>上传一张图片开始处理</strong><span>支持 PNG、JPG、WebP · 不超过 20 MB · 最长边 2048 px</span><button id="bgChoose" class="btn primary" type="button">选择图片</button></div>
+            <div id="bgCanvasArea" class="bg-canvas-area" hidden><div id="bgCanvasFrame" class="bg-canvas-frame" data-background="checker" data-mode="wand"><canvas id="bgCanvas" aria-label="图片处理结果"></canvas><canvas id="bgOverlay" aria-label="图片选区操作区"></canvas></div></div>
+          </div>
+          <p id="bgStatus" class="tool-status bg-status" role="status" aria-live="polite">图片只在当前浏览器处理，不上传服务器。</p>
+        </div>
+        <div class="bg-controls-column">
+          <h3>处理与导出</h3>
+          <p class="tool-hint">上传后会自动移除与图片边缘连通的相近颜色背景。适合纯色或近似纯色背景，复杂背景请手动修正。</p>
+          <div id="bgControls" hidden>
+            <label class="form-label" for="bgTolerance">颜色容差 <strong id="bgToleranceValue">22</strong><input id="bgTolerance" class="bg-range" type="range" min="0" max="100" value="22" /></label>
+            <p class="tool-hint">数值越高，选中的近似颜色越多；过高可能误删主体。</p>
+            <button id="bgAuto" class="btn secondary bg-auto-btn" type="button" disabled>重新自动移除背景</button>
+            <h4>手动修正</h4>
+            <div class="bg-mode-grid" role="group" aria-label="手动处理方式">
+              <button class="bg-mode active" data-bg-mode="wand" aria-pressed="true" type="button">相近颜色点选</button>
+              <button class="bg-mode" data-bg-mode="lasso" aria-pressed="false" type="button">套索选区</button>
+              <button class="bg-mode" data-bg-mode="erase" aria-pressed="false" type="button">画笔擦除</button>
+              <button class="bg-mode" data-bg-mode="restore" aria-pressed="false" type="button">画笔恢复</button>
+            </div>
+            <div id="bgBrushControl" hidden><label class="form-label" for="bgBrushSize">画笔大小 <strong id="bgBrushSizeValue">32</strong> px<input id="bgBrushSize" class="bg-range" type="range" min="4" max="160" value="32" /></label></div>
+            <p class="tool-hint">点选会移除相近颜色的连续区域；套索圈选后松开即可擦除。误删时可用恢复画笔或撤销。</p>
+            <div class="bg-edit-actions"><button id="bgUndo" class="btn secondary" type="button" disabled>撤销</button><button id="bgReset" class="btn secondary" type="button" disabled>恢复原图</button><button id="bgReplace" class="btn secondary" type="button">更换图片</button></div>
+            <button id="bgDownload" class="btn primary bg-download" type="button" disabled>下载透明 PNG</button>
+          </div>
+        </div>
+      </div>
+      <div class="tool-notes"><strong>使用说明</strong><p>自动处理依据图片边缘的相近颜色，不是 AI 人像分割。复杂纹理或与主体颜色相近的背景，请使用套索或画笔手动调整。导出的 PNG 保留原图尺寸和透明通道。</p></div>
     </section>`;
 }
 
@@ -82,6 +136,7 @@ function mount(root) {
   let disposed = false;
   let busy = false;
   let converterOpen = false;
+  const disposeBackground = mountBackgroundTool(root, on);
   root.dataset.previewBackground = "black";
   const formatSize = (bytes) => bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 / 1024).toFixed(2)} MB`;
   const status = (text, error = false) => {
@@ -219,16 +274,28 @@ function mount(root) {
     converterOpen = true;
     $("toolCatalog").hidden = true;
     $("toolWorkspace").hidden = false;
+    $("bgWorkspace").hidden = true;
     $("converterTitle").focus();
   }
+  function showBackground() {
+    converterOpen = false;
+    $("toolCatalog").hidden = true;
+    $("toolWorkspace").hidden = true;
+    $("bgWorkspace").hidden = false;
+    $("bgTitle").focus();
+  }
   function showCatalog() {
+    const returnTarget = $("bgWorkspace").hidden ? $("gifToolOpen") : $("bgToolOpen");
     converterOpen = false;
     $("toolWorkspace").hidden = true;
+    $("bgWorkspace").hidden = true;
     $("toolCatalog").hidden = false;
-    $("gifToolOpen").focus();
+    returnTarget.focus();
   }
   on($("gifToolOpen"), "click", showConverter);
   on($("gifToolBack"), "click", showCatalog);
+  on($("bgToolOpen"), "click", showBackground);
+  on($("bgToolBack"), "click", showCatalog);
   on($("gifDrop"), "click", () => $("gifFile").click());
   on($("gifReplace"), "click", () => $("gifFile").click());
   on($("gifFile"), "change", (event) => choose(event.target.files[0]));
@@ -274,6 +341,7 @@ function mount(root) {
   setBusy(false);
   cleanup = () => {
     disposed = true;
+    disposeBackground();
     stopWorker();
     controller.abort();
     if (previewURL) URL.revokeObjectURL(previewURL);
