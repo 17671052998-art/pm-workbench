@@ -58,6 +58,60 @@ async function main() {
     await page.locator("#bgAuto").click();
     assert.equal((await pixel(5, 5))[3], 0);
 
+    await page.locator("#bgReset").click();
+    await page.locator("#bgIntentInput").fill("去掉人物");
+    await page.locator("#bgAnalyzeIntent").click();
+    assert.match(await page.locator("#bgIntentError").textContent(), /无法可靠定位/);
+    assert.equal(await page.locator("#bgIntentPlan").isVisible(), false);
+    assert.equal((await pixel(50, 50))[3], 255);
+    await page.locator("#bgIntentInput").fill("我想保留左边的白色背景");
+    await page.locator("#bgAnalyzeIntent").click();
+    assert.equal(await page.locator("#bgIntentPlan").isVisible(), false);
+    await page.locator("#bgIntentInput").fill("不要去掉白色背景");
+    await page.locator("#bgAnalyzeIntent").click();
+    assert.equal(await page.locator("#bgIntentPlan").isVisible(), false);
+    await page.locator("#bgIntentInput").fill("去掉人物后面的背景");
+    await page.locator("#bgAnalyzeIntent").click();
+    assert.match(await page.locator("#bgIntentError").textContent(), /无法可靠定位/);
+    await page.locator("#bgIntentInput").fill("去掉左侧 101%");
+    await page.locator("#bgAnalyzeIntent").click();
+    assert.match(await page.locator("#bgIntentError").textContent(), /1%-100%/);
+    await page.locator("#bgIntentInput").fill("保留人物，去掉白色背景");
+    await page.locator("#bgAnalyzeIntent").click();
+    assert.match(await page.locator("#bgIntentWarning").textContent(), /语义识别/);
+    assert.equal(await page.locator("#bgIntentSteps li").count(), 1);
+
+    await page.locator("#bgIntentInput").fill("去掉白色背景，然后擦除左侧 40%");
+    await page.locator("#bgAnalyzeIntent").click();
+    assert.equal(await page.locator("#bgIntentSteps li").count(), 2);
+    assert.match(await page.locator("#bgIntentSteps").textContent(), /左侧40%/);
+    assert.match(await page.locator("#bgIntentSteps").textContent(), /预计覆盖/);
+    assert.ok(await page.locator("#bgOverlay").evaluate((canvas) => canvas.getContext("2d").getImageData(5, 5, 1, 1).data[3]) > 0);
+    await page.screenshot({ path: "/tmp/pm-workbench-background-intent-plan.png", fullPage: true });
+    await page.locator("#bgExecuteIntent").click();
+    assert.equal(await page.locator("#bgOverlay").evaluate((canvas) => canvas.getContext("2d").getImageData(5, 5, 1, 1).data[3]), 0);
+    assert.equal((await pixel(5, 5))[3], 0);
+    assert.equal((await pixel(35, 50))[3], 0);
+    assert.equal((await pixel(50, 50))[3], 255);
+    await page.locator("#bgUndo").click();
+    assert.equal((await pixel(5, 5))[3], 255);
+    assert.equal((await pixel(35, 50))[3], 255);
+
+    await page.locator("#bgIntentInput").fill("去掉左上角白色区域");
+    await page.locator("#bgAnalyzeIntent").click();
+    await page.locator("#bgExecuteIntent").click();
+    assert.equal((await pixel(5, 5))[3], 0);
+    assert.equal((await pixel(95, 5))[3], 255);
+    assert.equal((await pixel(50, 50))[3], 255);
+    await page.locator("#bgReset").click();
+    await page.locator("#bgAuto").click();
+    await page.locator("#bgIntentInput").fill("恢复左侧 20%");
+    await page.locator("#bgAnalyzeIntent").click();
+    await page.locator("#bgExecuteIntent").click();
+    assert.equal((await pixel(5, 5))[3], 255);
+    await page.locator("#bgUndo").click();
+    assert.equal((await pixel(5, 5))[3], 0);
+
     const overlay = await page.locator("#bgOverlay").boundingBox();
     const at = (x, y) => ({ x: overlay.x + overlay.width * x / 100, y: overlay.y + overlay.height * y / 100 });
     await page.locator('[data-bg-mode="restore"]').click();
@@ -111,12 +165,36 @@ async function main() {
     }, bytes.toString("base64"));
     assert.deepEqual(exported, [0, 255]);
     await page.screenshot({ path: "/tmp/pm-workbench-background-tool.png", fullPage: true });
+
+    const blueBase64 = await page.evaluate(() => {
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = 100;
+      const context = canvas.getContext("2d");
+      context.fillStyle = "#0000ff";
+      context.fillRect(0, 0, 100, 100);
+      context.fillStyle = "#ffdf00";
+      context.fillRect(30, 30, 40, 40);
+      return canvas.toDataURL("image/png").split(",")[1];
+    });
+    await page.locator("#bgFile").setInputFiles({ name: "blue.png", mimeType: "image/png", buffer: Buffer.from(blueBase64, "base64") });
+    await page.waitForFunction(() => document.querySelector("#bgFileName").textContent.startsWith("blue.png"));
+    await page.locator("#bgReset").click();
+    await page.locator("#bgIntentInput").fill("去掉蓝色背景");
+    await page.locator("#bgAnalyzeIntent").click();
+    await page.locator("#bgExecuteIntent").click();
+    assert.equal((await pixel(5, 5))[3], 0);
+    assert.equal((await pixel(50, 50))[3], 255);
+    await page.locator("#bgReset").click();
+    await page.locator("#bgIntentInput").fill("去掉 #0000FF 背景");
+    await page.locator("#bgAnalyzeIntent").click();
+    await page.locator("#bgExecuteIntent").click();
+    assert.equal((await pixel(5, 5))[3], 0);
     await page.locator("#bgToolBack").click();
     assert.equal(await page.locator("#toolCatalog").isVisible(), true);
     await page.locator("#gifToolOpen").click();
     assert.equal(await page.locator("#toolWorkspace").isVisible(), true);
     assert.deepEqual(errors, []);
-    console.log("PASS: automatic transparent background, manual restore/erase/lasso/wand, undo/reset, PNG export, catalog navigation and GIF tool coexistence.");
+    console.log("PASS: local intent recognition, multi-step plans, unsupported-object guard, region/color removal and restoration, single-step undo, manual editing, PNG export and GIF coexistence.");
   } finally {
     await browser?.close();
     await new Promise((resolve) => server.close(resolve));

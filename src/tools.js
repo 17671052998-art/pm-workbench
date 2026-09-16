@@ -100,6 +100,15 @@ function render() {
           <h3>处理与导出</h3>
           <p class="tool-hint">上传后会自动移除与图片边缘连通的相近颜色背景。适合纯色或近似纯色背景，复杂背景请手动修正。</p>
           <div id="bgControls" hidden>
+            <section class="bg-intent" aria-labelledby="bgIntentTitle">
+              <h4 id="bgIntentTitle">智能指令 · 本地识别</h4>
+              <p class="tool-hint">描述要处理的颜色和位置，先查看识别步骤，再执行。</p>
+              <label class="form-label" for="bgIntentInput">想处理哪里？<textarea id="bgIntentInput" rows="2" maxlength="200" placeholder="例如：去掉左上角白色背景，然后擦除下方 20%"></textarea></label>
+              <div class="bg-intent-examples"><button type="button" data-bg-example="去掉白色背景">去掉白色背景</button><button type="button" data-bg-example="去掉左上角白色区域">左上角白色区域</button><button type="button" data-bg-example="恢复左侧 20%">恢复左侧 20%</button></div>
+              <button id="bgAnalyzeIntent" class="btn secondary bg-intent-analyze" type="button">识别并拆解</button>
+              <p id="bgIntentError" class="tool-status is-error" role="alert" hidden></p>
+              <div id="bgIntentPlan" class="bg-intent-plan" hidden><strong>执行计划</strong><ol id="bgIntentSteps"></ol><p id="bgIntentWarning" hidden></p><button id="bgExecuteIntent" class="btn primary" type="button">按计划执行</button></div>
+            </section>
             <label class="form-label" for="bgTolerance">颜色容差 <strong id="bgToleranceValue">22</strong><input id="bgTolerance" class="bg-range" type="range" min="0" max="100" value="22" /></label>
             <p class="tool-hint">数值越高，选中的近似颜色越多；过高可能误删主体。</p>
             <button id="bgAuto" class="btn secondary bg-auto-btn" type="button" disabled>重新自动移除背景</button>

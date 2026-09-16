@@ -1,3 +1,5 @@
+import { parseBackgroundIntent } from "./background-intent.js";
+
 const MAX_EDGE = 2048;
 const MAX_BYTES = 20 * 1024 * 1024;
 
@@ -9,13 +11,13 @@ function colorDistance(data, index, color) {
   return red * red + green * green + blue * blue;
 }
 
-function dominantBorderColor(image) {
+function dominantBorderColor(image, matches = () => true) {
   const { width, height, data } = image;
   const bins = new Map();
   const stride = Math.max(1, Math.floor(Math.min(width, height) / 48));
   const add = (x, y) => {
     const index = (y * width + x) * 4;
-    if (data[index + 3] < 16) return;
+    if (data[index + 3] < 16 || !matches(y * width + x)) return;
     const key = `${data[index] >> 4},${data[index + 1] >> 4},${data[index + 2] >> 4}`;
     const bin = bins.get(key) || { count: 0, red: 0, green: 0, blue: 0 };
     bin.count++;
@@ -28,6 +30,36 @@ function dominantBorderColor(image) {
   for (let y = 0; y < height; y += stride) { add(0, y); add(width - 1, y); }
   const top = [...bins.values()].sort((a, b) => b.count - a.count)[0];
   return top ? [top.red / top.count, top.green / top.count, top.blue / top.count] : null;
+}
+
+function matchesNamedColor(data, index, key, tolerance) {
+  const offset = index * 4;
+  const red = data[offset] / 255;
+  const green = data[offset + 1] / 255;
+  const blue = data[offset + 2] / 255;
+  const max = Math.max(red, green, blue);
+  const min = Math.min(red, green, blue);
+  const difference = max - min;
+  const saturation = max ? difference / max : 0;
+  if (key === "white") return max >= .92 - tolerance / 450 && saturation <= .09 + tolerance / 270;
+  if (key === "black") return max <= .12 + tolerance / 330;
+  if (key === "gray") return saturation <= .15 + tolerance / 450 && max > .18 && max < .84;
+  if (saturation < .23 - tolerance / 800 || max < .18) return false;
+  let hue = 0;
+  if (difference) {
+    if (max === red) hue = ((green - blue) / difference) % 6;
+    else if (max === green) hue = (blue - red) / difference + 2;
+    else hue = (red - green) / difference + 4;
+    hue = (hue * 60 + 360) % 360;
+  }
+  if (key === "red") return hue < 18 || hue >= 345;
+  if (key === "orange") return hue >= 18 && hue < 48;
+  if (key === "yellow") return hue >= 48 && hue < 78;
+  if (key === "green") return hue >= 78 && hue < 175;
+  if (key === "blue") return hue >= 175 && hue < 255;
+  if (key === "purple") return hue >= 255 && hue < 300;
+  if (key === "pink") return hue >= 300 && hue < 345;
+  return false;
 }
 
 function floodMask(image, seeds, color, tolerance) {
@@ -81,6 +113,53 @@ function softenMask(mask, width, height) {
   return soft;
 }
 
+function insideRegion(x, y, width, height, region, fraction) {
+  if (!region) return true;
+  const nx = (x + .5) / width;
+  const ny = (y + .5) / height;
+  if (region === "left") return nx < fraction;
+  if (region === "right") return nx > 1 - fraction;
+  if (region === "top") return ny < fraction;
+  if (region === "bottom") return ny > 1 - fraction;
+  if (region === "top-left") return nx < fraction && ny < fraction;
+  if (region === "top-right") return nx > 1 - fraction && ny < fraction;
+  if (region === "bottom-left") return nx < fraction && ny > 1 - fraction;
+  if (region === "bottom-right") return nx > 1 - fraction && ny > 1 - fraction;
+  if (region === "border") return nx < fraction || nx > 1 - fraction || ny < fraction || ny > 1 - fraction;
+  if (region === "center") return Math.abs(nx - .5) < fraction / 2 && Math.abs(ny - .5) < fraction / 2;
+  return false;
+}
+
+function makeIntentMask(image, step, tolerance) {
+  const { width, height, data } = image;
+  const limit = (12 + tolerance * 2) ** 2;
+  const matches = (index) => step.colorKey === "hex" ? colorDistance(data, index, step.color) <= limit : matchesNamedColor(data, index, step.colorKey, tolerance);
+  const color = step.target === "background" ? dominantBorderColor(image) : step.borderOnly ? dominantBorderColor(image, matches) : step.color;
+  if (step.target !== "region" && !color) return null;
+  let mask;
+  if (step.target === "region") {
+    mask = new Uint8Array(width * height);
+    mask.fill(255);
+  } else if (step.target === "background" || step.borderOnly) {
+    const seeds = [];
+    const add = (index) => { if (colorDistance(data, index, color) <= limit && (step.target === "background" || matches(index))) seeds.push(index); };
+    for (let x = 0; x < width; x++) { add(x); add((height - 1) * width + x); }
+    for (let y = 1; y < height - 1; y++) { add(y * width); add(y * width + width - 1); }
+    mask = floodMask(image, seeds, color, tolerance);
+  } else {
+    mask = new Uint8Array(width * height);
+    for (let index = 0; index < mask.length; index++) {
+      if (data[index * 4 + 3] >= 16 && matches(index)) mask[index] = 255;
+    }
+  }
+  if (step.region) {
+    for (let index = 0; index < mask.length; index++) {
+      if (mask[index] && !insideRegion(index % width, Math.floor(index / width), width, height, step.region, step.fraction)) mask[index] = 0;
+    }
+  }
+  return { mask, color: step.target === "background" || step.borderOnly || step.colorKey === "hex" ? color : null, soften: step.target !== "region" };
+}
+
 export function mountBackgroundTool(root, on) {
   const $ = (id) => root.querySelector(`#${id}`);
   const canvas = $("bgCanvas");
@@ -98,6 +177,7 @@ export function mountBackgroundTool(root, on) {
   let revision = 0;
   let disposed = false;
   let renderPending = false;
+  let intentPlan = null;
 
   const status = (message, error = false) => {
     $("bgStatus").textContent = message;
@@ -126,24 +206,34 @@ export function mountBackgroundTool(root, on) {
     $("bgDownload").disabled = !original;
     $("bgAuto").disabled = !original;
   };
-  const applyMask = (mask, soften = false, backgroundColor = null) => {
+  const applySelection = (mask, action = "remove", soften = false, backgroundColor = null, recordUndo = true, deferRender = false) => {
     const selection = soften ? softenMask(mask, edited.width, edited.height) : mask;
-    if (!selection.some((value) => value > 0)) return false;
-    saveUndo();
+    let willChange = false;
+    for (let i = 0; i < selection.length; i++) {
+      if (!selection[i]) continue;
+      const offset = i * 4 + 3;
+      if (action === "remove" ? edited.data[offset] > 0 : edited.data[offset] < original.data[offset]) { willChange = true; break; }
+    }
+    if (!willChange) return false;
+    if (recordUndo) saveUndo();
     for (let i = 0; i < selection.length; i++) {
       if (!selection[i]) continue;
       const offset = i * 4 + 3;
       const remaining = 1 - selection[i] / 255;
-      if (backgroundColor && remaining > 0.05 && remaining < 1) {
+      if (action === "restore") {
+        edited.data[offset] = Math.round(edited.data[offset] + (original.data[offset] - edited.data[offset]) * (1 - remaining));
+        for (let channel = 0; channel < 3; channel++) edited.data[i * 4 + channel] = Math.round(edited.data[i * 4 + channel] * remaining + original.data[i * 4 + channel] * (1 - remaining));
+      } else if (backgroundColor && remaining > 0.05 && remaining < 1) {
         for (let channel = 0; channel < 3; channel++) {
           edited.data[i * 4 + channel] = Math.max(0, Math.min(255, Math.round((edited.data[i * 4 + channel] - backgroundColor[channel] * (1 - remaining)) / remaining)));
         }
       }
-      edited.data[offset] = Math.round(edited.data[offset] * remaining);
+      if (action === "remove") edited.data[offset] = Math.round(edited.data[offset] * remaining);
     }
-    render();
+    if (!deferRender) render();
     return true;
   };
+  const applyMask = (mask, soften = false, backgroundColor = null) => applySelection(mask, "remove", soften, backgroundColor);
   const borderSeeds = (color) => {
     const seeds = [];
     const width = original.width;
@@ -248,6 +338,7 @@ export function mountBackgroundTool(root, on) {
       original = context.getImageData(0, 0, canvas.width, canvas.height);
       edited = new ImageData(new Uint8ClampedArray(original.data), original.width, original.height);
       history = [];
+      clearIntentPlan();
       $("bgCanvasArea").hidden = false;
       $("bgEmpty").hidden = true;
       $("bgControls").hidden = false;
@@ -264,17 +355,100 @@ export function mountBackgroundTool(root, on) {
     }
   };
 
+  function clearIntentPlan() {
+    intentPlan = null;
+    $("bgIntentPlan").hidden = true;
+    $("bgExecuteIntent").disabled = false;
+    $("bgExecuteIntent").textContent = "按计划执行";
+    $("bgIntentError").hidden = true;
+    $("bgIntentError").textContent = "";
+    clearOverlay();
+  }
+
+  const drawIntentPreview = (steps) => {
+    const preview = overlayContext.createImageData(overlay.width, overlay.height);
+    for (const { step, selection } of steps) {
+      if (!selection) continue;
+      for (let i = 0; i < selection.mask.length; i++) {
+        if (!selection.mask[i]) continue;
+        const offset = i * 4;
+        const restore = step.action === "restore";
+        preview.data[offset] = restore ? 42 : 93;
+        preview.data[offset + 1] = restore ? 184 : 95;
+        preview.data[offset + 2] = restore ? 132 : 239;
+        preview.data[offset + 3] = 90;
+      }
+    }
+    overlayContext.putImageData(preview, 0, 0);
+  };
+
+  const analyzeIntent = () => {
+    clearIntentPlan();
+    if (!original) {
+      $("bgIntentError").textContent = "请先上传图片。";
+      $("bgIntentError").hidden = false;
+      return;
+    }
+    const parsed = parseBackgroundIntent($("bgIntentInput").value);
+    if (parsed.error) {
+      $("bgIntentError").textContent = parsed.error;
+      $("bgIntentError").hidden = false;
+      return;
+    }
+    intentPlan = parsed.steps.map((step) => ({ step, selection: makeIntentMask(original, step, tolerance()) }));
+    const list = $("bgIntentSteps");
+    list.replaceChildren();
+    for (const { step, selection } of intentPlan) {
+      const item = document.createElement("li");
+      const affected = selection ? selection.mask.reduce((count, value) => count + (value > 0 ? 1 : 0), 0) : 0;
+      const percent = (affected / (original.width * original.height) * 100).toFixed(1);
+      item.textContent = `${step.label} · 预计覆盖 ${percent}%`;
+      list.append(item);
+    }
+    $("bgIntentWarning").hidden = !parsed.warning;
+    $("bgIntentWarning").textContent = parsed.warning || "";
+    $("bgIntentPlan").hidden = false;
+    drawIntentPreview(intentPlan);
+    status(`已识别 ${parsed.steps.length} 个处理步骤，请检查计划后执行。`);
+  };
+
+  const executeIntent = () => {
+    if (!original || !intentPlan) return;
+    let changed = false;
+    for (const { step, selection } of intentPlan) {
+      if (!selection) continue;
+      const result = applySelection(selection.mask, step.action, selection.soften, selection.color, !changed, true);
+      changed = changed || result;
+    }
+    if (changed) {
+      render();
+      clearOverlay();
+      updateActions();
+      status(`已执行 ${intentPlan.length} 个文字指令步骤，可用撤销或画笔调整。`);
+      $("bgExecuteIntent").disabled = true;
+      $("bgExecuteIntent").textContent = "已执行";
+      intentPlan = null;
+    } else {
+      status("指令没有选中可处理的像素，请调整描述或颜色容差。", true);
+    }
+  };
+
   on($("bgFile"), "change", (event) => choose(event.target.files[0]));
   on($("bgChoose"), "click", () => $("bgFile").click());
   on($("bgReplace"), "click", () => $("bgFile").click());
   on($("bgDrop"), "dragover", (event) => { event.preventDefault(); $("bgDrop").classList.add("is-dragging"); });
   on($("bgDrop"), "dragleave", () => $("bgDrop").classList.remove("is-dragging"));
   on($("bgDrop"), "drop", (event) => { event.preventDefault(); $("bgDrop").classList.remove("is-dragging"); if (event.dataTransfer.files.length === 1) choose(event.dataTransfer.files[0]); else status("每次请选择一张图片。", true); });
-  on($("bgAuto"), "click", autoRemove);
-  on($("bgTolerance"), "input", () => { $("bgToleranceValue").textContent = tolerance(); });
+  on($("bgAuto"), "click", () => { clearIntentPlan(); autoRemove(); });
+  on($("bgAnalyzeIntent"), "click", analyzeIntent);
+  on($("bgExecuteIntent"), "click", executeIntent);
+  on($("bgIntentInput"), "input", clearIntentPlan);
+  root.querySelectorAll("[data-bg-example]").forEach((button) => on(button, "click", () => { $("bgIntentInput").value = button.dataset.bgExample; analyzeIntent(); }));
+  on($("bgTolerance"), "input", () => { $("bgToleranceValue").textContent = tolerance(); clearIntentPlan(); });
   on($("bgBrushSize"), "input", () => { $("bgBrushSizeValue").textContent = $("bgBrushSize").value; });
   on($("bgPreviewBackground"), "change", () => { $("bgCanvasFrame").dataset.background = $("bgPreviewBackground").value; });
   root.querySelectorAll("[data-bg-mode]").forEach((button) => on(button, "click", () => {
+    clearIntentPlan();
     mode = button.dataset.bgMode;
     root.querySelectorAll("[data-bg-mode]").forEach((item) => { item.classList.toggle("active", item === button); item.setAttribute("aria-pressed", item === button ? "true" : "false"); });
     $("bgBrushControl").hidden = mode !== "erase" && mode !== "restore";
@@ -283,6 +457,7 @@ export function mountBackgroundTool(root, on) {
   }));
   on($("bgOverlay"), "pointerdown", (event) => {
     if (!edited) return;
+    clearIntentPlan();
     event.preventDefault();
     const point = position(event);
     if (mode === "wand") {
@@ -318,6 +493,7 @@ export function mountBackgroundTool(root, on) {
   on($("bgOverlay"), "pointercancel", finishStroke);
   on(window, "resize", fitPreview);
   on($("bgUndo"), "click", () => {
+    clearIntentPlan();
     const previous = history.pop();
     if (!previous || !edited) return;
     edited = new ImageData(previous, edited.width, edited.height);
@@ -327,6 +503,7 @@ export function mountBackgroundTool(root, on) {
   });
   on($("bgReset"), "click", () => {
     if (!original) return;
+    clearIntentPlan();
     saveUndo();
     edited = new ImageData(new Uint8ClampedArray(original.data), original.width, original.height);
     render();

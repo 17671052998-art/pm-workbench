@@ -433,6 +433,22 @@ kbd { padding: 1px 4px; border: 1px solid #d9dde7; border-radius: 4px; color: #a
 .bg-status { margin: 10px 0 0; }
 .bg-controls-column { min-width: 0; }
 .bg-controls-column h4 { margin: 22px 0 9px; font-size: 12px; }
+.bg-intent { margin: 17px 0 20px; padding: 15px; border: 1px solid #dce1fb; border-radius: 10px; background: #f8f9ff; }
+.bg-intent h4 { margin: 0 0 4px; color: #353b73; }
+.bg-intent .tool-hint { margin: 0 0 10px; }
+.bg-intent .form-label { margin-top: 0; }
+.bg-intent textarea { width: 100%; min-height: 64px; margin-top: 6px; padding: 9px 10px; border: 1px solid #d9def0; border-radius: 8px; color: var(--ink); background: #fff; font: inherit; font-size: 11px; line-height: 1.5; resize: vertical; }
+.bg-intent textarea:focus { outline: 0; border-color: #a7a8ff; box-shadow: 0 0 0 3px #eeeeff; }
+.bg-intent-examples { display: flex; flex-wrap: wrap; gap: 5px; margin: 9px 0; }
+.bg-intent-examples button { padding: 4px 7px; border: 1px solid #dce0f2; border-radius: 6px; color: #606c9b; background: #fff; font-size: 10px; }
+.bg-intent-examples button:hover { border-color: #a7a8ff; color: var(--primary-dark); }
+.bg-intent-analyze { width: 100%; }
+.bg-intent #bgIntentError { min-height: 0; margin: 8px 0 0; font-size: 11px; }
+.bg-intent-plan { margin-top: 10px; padding: 12px; border: 1px solid #cdd5f6; border-radius: 8px; background: #fff; font-size: 11px; }
+.bg-intent-plan strong { color: #303b73; }
+.bg-intent-plan ol { margin: 7px 0 10px; padding-left: 18px; color: #566075; line-height: 1.8; }
+.bg-intent-plan p { margin: 0 0 10px; color: #a56826; line-height: 1.6; }
+.bg-intent-plan .btn { width: 100%; }
 .bg-controls-column .form-label { margin-top: 18px; font-size: 12px; }
 .bg-controls-column .form-label strong { color: var(--primary-dark); font-family: "DM Sans", sans-serif; }
 .bg-range, .bg-controls-column .form-label input.bg-range { display: block; width: 100%; height: 24px; margin-top: 8px; padding: 0; accent-color: var(--primary); }
