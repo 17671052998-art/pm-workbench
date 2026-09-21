@@ -77,7 +77,10 @@ async function main() {
     await page.locator("#gifToolOpen").click();
     assert.equal(await page.locator("#gifUsage").inputValue(), "emoji");
     assert.equal(await page.locator("#gifRepeat").inputValue(), "1");
+    assert.equal(await page.locator("#gifRepeat option").count(), 30);
+    assert.deepEqual(await page.locator("#gifRepeat option").evaluateAll((options) => options.map((option) => Number(option.value))), Array.from({ length: 30 }, (_, index) => index + 1));
     assert.equal(await page.locator('#gifRepeat option[value="20"]').count(), 1);
+    assert.equal(await page.locator('#gifRepeat option[value="26"]').count(), 1);
     assert.equal(await page.locator('#gifRepeat option[value="30"]').count(), 1);
     assert.equal(await page.locator("#gifGeneralOptions").isVisible(), false);
     assert.match(await page.locator("#gifOutputHint").textContent(), /选择 GIF/);
@@ -155,7 +158,7 @@ async function main() {
     await page.locator("#gifRepeat").selectOption("1");
     assert.equal(await page.locator("#gifFps").inputValue(), "30");
     assert.equal(await page.locator("#gifFps").isDisabled(), false);
-    console.log("PASS: emoji SVGA 2.0 / 20 FPS / 240 square, 20/30 repeat options, 30 exact timeline repetitions, calculated duration and preset restoration.");
+    console.log("PASS: emoji SVGA 2.0 / 20 FPS / 240 square, every repeat option from 1 through 30, 30 exact timeline repetitions, calculated duration and preset restoration.");
 
     // Optional local regression assets stay outside the public repository.
     if (process.env.EDGE_ORIGINAL_SVGA && process.env.EDGE_FIXED_SVGA) {
