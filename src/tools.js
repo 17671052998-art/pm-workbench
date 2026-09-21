@@ -1,7 +1,7 @@
 import { mountBackgroundTool } from "./background-remove.js";
 
 const workerURL = new URL("./gif-worker.js", document.currentScript.src);
-workerURL.search = "v=repeat-1";
+workerURL.search = "v=repeat-30";
 let cleanup = () => {};
 
 function render() {
@@ -72,7 +72,7 @@ function render() {
           <label class="form-label" for="gifFps">输出帧率<select id="gifFps"><option value="30">30 FPS（推荐）</option><option value="60">60 FPS</option><option value="20">20 FPS</option><option value="15">15 FPS</option></select></label>
           <p class="tool-hint">按原动画时长匹配播放节奏，时间精度受帧率影响；极短帧可能合并。</p>
           </div>
-          <label class="form-label" for="gifRepeat">重复播放次数<select id="gifRepeat"><option value="1">1 次（保持原时长）</option><option value="2">2 次</option><option value="3">3 次</option><option value="4">4 次</option><option value="5">5 次</option><option value="6">6 次</option><option value="7">7 次</option><option value="8">8 次</option><option value="9">9 次</option><option value="10">10 次</option></select></label>
+          <label class="form-label" for="gifRepeat">重复播放次数<select id="gifRepeat"><option value="1">1 次（保持原时长）</option><option value="2">2 次</option><option value="3">3 次</option><option value="4">4 次</option><option value="5">5 次</option><option value="6">6 次</option><option value="7">7 次</option><option value="8">8 次</option><option value="9">9 次</option><option value="10">10 次</option><option value="20">20 次</option><option value="30">30 次</option></select></label>
           <p class="tool-hint">导出时会连续复制完整动画。例如原时长 0.25 秒，选择 4 次后输出约 1.00 秒。</p>
           <label class="form-label" for="gifEdgeMode">透明边缘处理<select id="gifEdgeMode"><option value="none">保留原始边缘</option><option value="soft">柔化锯齿</option><option value="white">去白边并柔化</option></select></label>
           <p class="tool-hint">有碎白边时选「去白边并柔化」，会收缩残留边缘并重新生成平滑的半透明轮廓。</p>

@@ -53,7 +53,7 @@ async function convert({ gif, frames, info }, options) {
   if (!["none", "soft", "white"].includes(edgeMode)) fail("边缘处理参数无效，请重新选择。");
   if (![1, 1.5, 2].includes(edgeTrim)) fail("去边宽度无效，请重新选择。");
   if (![15, 20, 30, 60].includes(fps) || ![0, 240, 480, 720].includes(maxEdge)) fail("转换参数无效，请重新选择。");
-  if (!Number.isInteger(repeat) || repeat < 1 || repeat > 10) fail("重复播放次数无效，请重新选择。");
+  if (!Number.isInteger(repeat) || repeat < 1 || repeat > 30) fail("重复播放次数无效，请重新选择。");
   const scale = maxEdge ? Math.min(1, maxEdge / Math.max(info.width, info.height)) : 1;
   const drawWidth = Math.max(1, Math.round(info.width * scale));
   const drawHeight = Math.max(1, Math.round(info.height * scale));
