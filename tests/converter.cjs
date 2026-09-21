@@ -76,14 +76,16 @@ async function main() {
     assert.equal(await page.locator("#toolCatalog").isVisible(), true);
     await page.locator("#gifToolOpen").click();
     assert.equal(await page.locator("#gifUsage").inputValue(), "emoji");
+    assert.equal(await page.locator("#gifRepeat").inputValue(), "1");
     assert.equal(await page.locator("#gifGeneralOptions").isVisible(), false);
-    assert.match(await page.locator("#gifOutputHint").textContent(), /20 帧 · 1.00 秒/);
+    assert.match(await page.locator("#gifOutputHint").textContent(), /选择 GIF/);
     await page.locator("#gifUsage").selectOption("general");
     assert.equal(await page.locator("#gifConvert").isDisabled(), true);
     const input = { name: "animation.gif", mimeType: "image/gif", buffer: fixture() };
     await page.locator("#gifFile").setInputFiles(input);
     await page.waitForFunction(() => !document.querySelector("#gifConvert").disabled);
     assert.match(await page.locator("#gifMetadata").textContent(), /4 帧 · 0.70 秒/);
+    assert.match(await page.locator("#gifOutputHint").textContent(), /21 帧 · 0.70 秒 × 1 次 = 0.70 秒/);
     await page.locator("#gifConvert").click();
     await page.locator("#gifResult").waitFor({ state: "visible" });
     const downloadEvent = page.waitForEvent("download");
@@ -134,20 +136,24 @@ async function main() {
     await page.locator("#gifUsage").selectOption("emoji");
     assert.equal(await page.locator("#gifResult").isVisible(), false);
     assert.equal(await page.locator("#gifFps").isDisabled(), true);
+    await page.locator("#gifRepeat").selectOption("4");
+    assert.match(await page.locator("#gifOutputHint").textContent(), /56 帧 · 0.70 秒 × 4 次 = 2.80 秒/);
     await page.locator("#gifConvert").click();
     await page.locator("#gifResult").waitFor({ state: "visible" });
     const emoji = await page.evaluate(async () => {
       const item = await new Promise((resolve, reject) => new SVGA.Parser().load(document.querySelector("#gifDownload").href, resolve, reject));
       return { version: item.version, FPS: item.FPS, frames: item.frames, videoSize: item.videoSize, timeline: Array.from({ length: item.frames }, (_, frame) => item.sprites.filter((sprite) => sprite.frames[frame].alpha > 0).map((sprite) => sprite.imageKey)) };
     });
-    assert.deepEqual({ ...emoji, timeline: undefined }, { version: "2.0", FPS: 20, frames: 20, videoSize: { width: 240, height: 240 }, timeline: undefined });
-    assert.deepEqual(emoji.timeline, [ ...Array(3).fill(["frame_0"]), ...Array(6).fill(["frame_1"]), ...Array(8).fill(["frame_2"]), ...Array(3).fill(["frame_3"]) ]);
-    assert.match(await page.locator("#gifResultInfo").textContent(), /240 × 240 px · 20 帧 · 20 FPS · 1.00 秒/);
+    assert.deepEqual({ ...emoji, timeline: undefined }, { version: "2.0", FPS: 20, frames: 56, videoSize: { width: 240, height: 240 }, timeline: undefined });
+    const emojiCycle = [ ...Array(2).fill(["frame_0"]), ...Array(4).fill(["frame_1"]), ...Array(6).fill(["frame_2"]), ...Array(2).fill(["frame_3"]) ];
+    assert.deepEqual(emoji.timeline, Array.from({ length: 4 }, () => emojiCycle).flat());
+    assert.match(await page.locator("#gifResultInfo").textContent(), /240 × 240 px · 56 帧 · 20 FPS · 2.80 秒 · 完整播放 4 次/);
     await page.screenshot({ path: "/tmp/pm-workbench-emoji.png", fullPage: true });
     await page.locator("#gifUsage").selectOption("general");
+    await page.locator("#gifRepeat").selectOption("1");
     assert.equal(await page.locator("#gifFps").inputValue(), "30");
     assert.equal(await page.locator("#gifFps").isDisabled(), false);
-    console.log("PASS: emoji default and exact SVGA 2.0 / 20 FPS / 20 frames / 240 square, proportional timing, preset invalidation and general settings restoration.");
+    console.log("PASS: emoji SVGA 2.0 / 20 FPS / 240 square, four exact timeline repetitions, calculated duration, preset invalidation and general settings restoration.");
 
     // Optional local regression assets stay outside the public repository.
     if (process.env.EDGE_ORIGINAL_SVGA && process.env.EDGE_FIXED_SVGA) {
@@ -236,9 +242,9 @@ async function main() {
       const ctx = canvas.getContext("2d"); ctx.drawImage(image, 0, 0);
       return { size: item.videoSize, fps: item.FPS, frames: item.frames, samples: [59, 60, 179, 180].map((y) => Array.from(ctx.getImageData(120, y, 1, 1).data)) };
     });
-    assert.deepEqual(letterbox, { size: { width: 240, height: 240 }, fps: 20, frames: 20, samples: [[0, 0, 0, 0], [255, 0, 0, 255], [255, 0, 0, 255], [0, 0, 0, 0]] });
+    assert.deepEqual(letterbox, { size: { width: 240, height: 240 }, fps: 20, frames: 2, samples: [[0, 0, 0, 0], [255, 0, 0, 255], [255, 0, 0, 255], [0, 0, 0, 0]] });
     await page.locator("#gifUsage").selectOption("general");
-    console.log("PASS: non-square GIF letterboxed without distortion and static GIF held for all 20 frames.");
+    console.log("PASS: non-square GIF letterboxed without distortion and static GIF keeps its original duration.");
 
     await page.locator("#gifEdgeMode").selectOption("white");
     await page.locator("#gifConvert").click();

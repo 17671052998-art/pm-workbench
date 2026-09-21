@@ -1,7 +1,7 @@
 import { mountBackgroundTool } from "./background-remove.js";
 
 const workerURL = new URL("./gif-worker.js", document.currentScript.src);
-workerURL.search = "v=emoji-1";
+workerURL.search = "v=repeat-1";
 let cleanup = () => {};
 
 function render() {
@@ -65,13 +65,15 @@ function render() {
         <div class="tool-settings">
           <h3>2. 设置与转换</h3>
           <label class="form-label" for="gifUsage">用途类型<select id="gifUsage"><option value="emoji">表情包</option><option value="general">通用素材</option></select></label>
-          <div id="gifEmojiPreset"><p class="tool-output-hint">表情包标准：SVGA 2.0 · 240 × 240 px · 20 FPS · 20 帧</p><p class="tool-hint">固定 1 秒，按原动画各帧时长比例重采样。等比居中、透明补边，不裁切、不放大小尺寸素材。格式版本统一为 2.0，无需选择。</p></div>
+          <div id="gifEmojiPreset"><p class="tool-output-hint">表情包标准：SVGA 2.0 · 240 × 240 px · 20 FPS</p><p class="tool-hint">保持原 GIF 的播放节奏，帧数和时长根据重复次数计算。等比居中、透明补边，不裁切、不放大小尺寸素材。</p></div>
           <div id="gifGeneralOptions" hidden>
           <label class="form-label" for="gifSize">输出尺寸<select id="gifSize"><option value="720">最长边 720 px（推荐）</option><option value="480">最长边 480 px</option><option value="240">最长边 240 px</option><option value="0">保持原始尺寸</option></select></label>
           <p class="tool-hint">保持比例，不放大小尺寸图片。</p>
           <label class="form-label" for="gifFps">输出帧率<select id="gifFps"><option value="30">30 FPS（推荐）</option><option value="60">60 FPS</option><option value="20">20 FPS</option><option value="15">15 FPS</option></select></label>
           <p class="tool-hint">按原动画时长匹配播放节奏，时间精度受帧率影响；极短帧可能合并。</p>
           </div>
+          <label class="form-label" for="gifRepeat">重复播放次数<select id="gifRepeat"><option value="1">1 次（保持原时长）</option><option value="2">2 次</option><option value="3">3 次</option><option value="4">4 次</option><option value="5">5 次</option><option value="6">6 次</option><option value="7">7 次</option><option value="8">8 次</option><option value="9">9 次</option><option value="10">10 次</option></select></label>
+          <p class="tool-hint">导出时会连续复制完整动画。例如原时长 0.25 秒，选择 4 次后输出约 1.00 秒。</p>
           <label class="form-label" for="gifEdgeMode">透明边缘处理<select id="gifEdgeMode"><option value="none">保留原始边缘</option><option value="soft">柔化锯齿</option><option value="white">去白边并柔化</option></select></label>
           <p class="tool-hint">有碎白边时选「去白边并柔化」，会收缩残留边缘并重新生成平滑的半透明轮廓。</p>
           <div id="gifEdgeTrimBox" hidden><label class="form-label" for="gifEdgeTrim">去边宽度<select id="gifEdgeTrim"><option value="1">1 px · 轻度</option><option value="1.5" selected>1.5 px · 标准（推荐）</option><option value="2">2 px · 较强</option></select></label><p class="tool-hint">以最终输出像素为准。轮廓会略微收缩，仍有残边可选 2 px；细小素材建议先用 1 px。</p></div>
@@ -82,7 +84,7 @@ function render() {
           <div id="gifResult" class="tool-result" hidden><strong>转换完成</strong><p id="gifResultInfo"></p><p id="gifEdgeNotice"></p><label class="tool-preview-control">结果抽帧预览<select id="gifResultFrame"></select></label><div class="tool-preview tool-result-preview"><img id="gifResultPreview" alt="转换后 SVGA 的实际帧画面" /></div><p class="tool-hint">预览为导出文件中的实际帧；下载文件保留完整动画。</p><a id="gifDownload" class="btn primary">下载 SVGA</a></div>
         </div>
       </div>
-      <div class="tool-notes"><strong>使用说明</strong><p>文件仅在当前浏览器中处理，不上传服务器。离开工具箱或退出登录会清除本次文件；转换完成后请下载保存。</p><p>输出为 SVGA 2.0 逐帧位图动画，不会自动转为矢量，文件可能增大。保留原图透明区域，不会自动去除实色背景；循环次数由使用方播放器设置。</p></div>
+      <div class="tool-notes"><strong>使用说明</strong><p>文件仅在当前浏览器中处理，不上传服务器。离开工具箱或退出登录会清除本次文件；转换完成后请下载保存。</p><p>输出为 SVGA 2.0 逐帧位图动画，不会自动转为矢量，文件可能增大。这里的重复次数会直接写入动画时间轴；播放器仍可对整个 SVGA 再设置循环播放。</p></div>
     </section>
     <section id="bgWorkspace" class="panel tool-workspace bg-workspace" aria-labelledby="bgTitle" hidden>
       <header class="panel-head"><div class="tool-workspace-title"><button id="bgToolBack" class="tool-back" type="button" aria-label="返回工具箱">←</button><div><h2 id="bgTitle" tabindex="-1">移除图片背景</h2><p>自动去除相近色背景，再通过选区和画笔修正。</p></div></div><span class="doc-tag">图片处理</span></header>
@@ -160,7 +162,7 @@ function mount(root) {
   }
   function setBusy(value) {
     busy = value;
-    ["gifUsage", "gifSize", "gifFps", "gifEdgeMode", "gifEdgeTrim", "gifReplace", "gifFile", "gifDrop"].forEach((id) => { $(id).disabled = value; });
+    ["gifUsage", "gifSize", "gifFps", "gifRepeat", "gifEdgeMode", "gifEdgeTrim", "gifReplace", "gifFile", "gifDrop"].forEach((id) => { $(id).disabled = value; });
     if ($("gifUsage").value === "emoji") { $("gifSize").disabled = true; $("gifFps").disabled = true; }
     $("gifConvert").disabled = value || !metadata;
     $("gifCancel").hidden = !value;
@@ -178,19 +180,20 @@ function mount(root) {
     $("gifResult").hidden = true;
   }
   function updateOutputHint() {
-    if ($("gifUsage").value === "emoji") {
-      $("gifOutputHint").textContent = "输出：SVGA 2.0 · 240 × 240 px · 20 FPS · 20 帧 · 1.00 秒";
-      return;
-    }
     if (!metadata) {
       $("gifOutputHint").textContent = "选择 GIF 后可查看预计输出信息。";
       return;
     }
-    const edge = Number($("gifSize").value);
-    const scale = edge ? Math.min(1, edge / Math.max(metadata.width, metadata.height)) : 1;
-    const fps = Number($("gifFps").value);
-    const frames = Math.max(1, Math.round(metadata.duration * fps / 1000));
-    $("gifOutputHint").textContent = `预计输出：${Math.max(1, Math.round(metadata.width * scale))} × ${Math.max(1, Math.round(metadata.height * scale))} px · ${fps} FPS · ${(frames / fps).toFixed(2)} 秒`;
+    const emoji = $("gifUsage").value === "emoji";
+    const edge = emoji ? 240 : Number($("gifSize").value);
+    const scale = emoji ? Math.min(1, edge / Math.max(metadata.width, metadata.height)) : edge ? Math.min(1, edge / Math.max(metadata.width, metadata.height)) : 1;
+    const width = emoji ? 240 : Math.max(1, Math.round(metadata.width * scale));
+    const height = emoji ? 240 : Math.max(1, Math.round(metadata.height * scale));
+    const fps = emoji ? 20 : Number($("gifFps").value);
+    const repeat = Number($("gifRepeat").value);
+    const cycleFrames = Math.max(1, Math.round(metadata.duration * fps / 1000));
+    const frames = cycleFrames * repeat;
+    $("gifOutputHint").textContent = `预计输出：${width} × ${height} px · ${fps} FPS · ${frames} 帧 · ${(cycleFrames / fps).toFixed(2)} 秒 × ${repeat} 次 = ${(frames / fps).toFixed(2)} 秒`;
   }
   function failure(message) {
     stopWorker();
@@ -251,12 +254,12 @@ function mount(root) {
           });
           $("gifResultPreview").src = resultPreviewURLs[0];
           $("gifEdgeNotice").textContent = $("gifEdgeMode").value === "none" ? "已保留原始边缘。" : info.edgeApplied ? $("gifEdgeMode").value === "white" ? `已按 ${$("gifEdgeTrim").value} px 去边并重建透明轮廓，请切换底色检查效果。` : "已柔化透明边缘，请切换底色检查效果。" : "未检测到可处理的透明边缘，边缘优化未生效；此工具不会去除实色背景。";
-          $("gifResultInfo").textContent = `${formatSize(blob.size)} · ${info.width} × ${info.height} px · ${info.frames} 帧 · ${info.fps} FPS · ${(info.duration / 1000).toFixed(2)} 秒`;
+          $("gifResultInfo").textContent = `${formatSize(blob.size)} · ${info.width} × ${info.height} px · ${info.frames} 帧 · ${info.fps} FPS · ${(info.duration / 1000).toFixed(2)} 秒 · 完整播放 ${info.repeat} 次`;
           $("gifResult").hidden = false;
           status("转换成功，请下载保存 SVGA 文件。");
         }
       };
-      worker.postMessage({ buffer, inspect, options: { usage: $("gifUsage").value, maxEdge: $("gifSize").value, fps: $("gifFps").value, edgeMode: $("gifEdgeMode").value, edgeTrim: $("gifEdgeTrim").value } }, [buffer]);
+      worker.postMessage({ buffer, inspect, options: { usage: $("gifUsage").value, maxEdge: $("gifSize").value, fps: $("gifFps").value, repeat: $("gifRepeat").value, edgeMode: $("gifEdgeMode").value, edgeTrim: $("gifEdgeTrim").value } }, [buffer]);
     } catch {
       if (!disposed && job === revision) failure("无法读取文件或启动转换，请重新选择文件或更换浏览器。");
     }
@@ -326,7 +329,7 @@ function mount(root) {
   });
   on($("gifPreviewBackground"), "change", () => { root.dataset.previewBackground = $("gifPreviewBackground").value; });
   on($("gifResultFrame"), "change", () => { $("gifResultPreview").src = resultPreviewURLs[Number($("gifResultFrame").value)]; });
-  ["gifUsage", "gifSize", "gifFps", "gifEdgeMode", "gifEdgeTrim"].forEach((id) => on($(id), "change", () => {
+  ["gifUsage", "gifSize", "gifFps", "gifRepeat", "gifEdgeMode", "gifEdgeTrim"].forEach((id) => on($(id), "change", () => {
     const emoji = $("gifUsage").value === "emoji";
     $("gifEmojiPreset").hidden = !emoji;
     $("gifGeneralOptions").hidden = emoji;

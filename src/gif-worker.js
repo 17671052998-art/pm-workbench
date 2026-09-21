@@ -47,11 +47,13 @@ async function convert({ gif, frames, info }, options) {
   const emoji = usage === "emoji";
   const fps = emoji ? 20 : Number(options.fps);
   const maxEdge = emoji ? 240 : Number(options.maxEdge);
+  const repeat = Number(options.repeat || 1);
   const edgeMode = options.edgeMode || "none";
   const edgeTrim = Number(options.edgeTrim || 1.5);
   if (!["none", "soft", "white"].includes(edgeMode)) fail("边缘处理参数无效，请重新选择。");
   if (![1, 1.5, 2].includes(edgeTrim)) fail("去边宽度无效，请重新选择。");
   if (![15, 20, 30, 60].includes(fps) || ![0, 240, 480, 720].includes(maxEdge)) fail("转换参数无效，请重新选择。");
+  if (!Number.isInteger(repeat) || repeat < 1 || repeat > 10) fail("重复播放次数无效，请重新选择。");
   const scale = maxEdge ? Math.min(1, maxEdge / Math.max(info.width, info.height)) : 1;
   const drawWidth = Math.max(1, Math.round(info.width * scale));
   const drawHeight = Math.max(1, Math.round(info.height * scale));
@@ -59,8 +61,10 @@ async function convert({ gif, frames, info }, options) {
   const height = emoji ? 240 : drawHeight;
   const offsetX = Math.floor((width - drawWidth) / 2);
   const offsetY = Math.floor((height - drawHeight) / 2);
-  const count = emoji ? 20 : Math.max(1, Math.round(info.duration * fps / 1000));
-  const timeScale = emoji ? count / info.duration : fps / 1000;
+  const cycleCount = Math.max(1, Math.round(info.duration * fps / 1000));
+  const count = cycleCount * repeat;
+  if (count / fps > 30) fail("重复后的动画超过 30 秒，请减少重复次数。");
+  const timeScale = cycleCount / info.duration;
   const canvas = new OffscreenCanvas(info.width, info.height);
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   const output = new OffscreenCanvas(width, height);
@@ -102,7 +106,7 @@ async function convert({ gif, frames, info }, options) {
     ctx.drawImage(patch, frame.dims.left, frame.dims.top);
     const start = Math.round(elapsed * timeScale);
     elapsed += delayOf(frames[i]);
-    const end = i === frames.length - 1 ? count : Math.round(elapsed * timeScale);
+    const end = i === frames.length - 1 ? cycleCount : Math.round(elapsed * timeScale);
     if (end > start) {
       out.clearRect(0, 0, width, height);
       out.drawImage(canvas, offsetX, offsetY, drawWidth, drawHeight);
@@ -112,13 +116,19 @@ async function convert({ gif, frames, info }, options) {
         out.putImageData(image, 0, 0);
       }
       const png = new Uint8Array(await (await output.convertToBlob({ type: "image/png" })).arrayBuffer());
-      for (const preview of previews) if (preview.frame >= start && preview.frame < end) preview.png = png;
+      for (const preview of previews) {
+        const cycleFrame = preview.frame % cycleCount;
+        if (cycleFrame >= start && cycleFrame < end) preview.png = png;
+      }
       imageBytes += png.length;
       if (imageBytes > 64 * 1024 * 1024) fail("转换文件过大，请选择更小的输出尺寸重试。");
       const key = `frame_${i}`;
       movie.images[key] = png;
       const visible = { alpha: 1, layout: { x: 0, y: 0, width, height }, transform: { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 } };
-      movie.sprites.push({ imageKey: key, frames: Array.from({ length: count }, (_, t) => t >= start && t < end ? visible : { alpha: 0 }) });
+      movie.sprites.push({ imageKey: key, frames: Array.from({ length: count }, (_, t) => {
+        const cycleFrame = t % cycleCount;
+        return cycleFrame >= start && cycleFrame < end ? visible : { alpha: 0 };
+      }) });
     }
     previous = frame;
     self.postMessage({ type: "progress", value: Math.round((i + 1) / frames.length * 90), message: `正在处理第 ${i + 1} / ${frames.length} 帧` });
@@ -127,7 +137,7 @@ async function convert({ gif, frames, info }, options) {
   const error = MovieEntity.verify(movie);
   if (error) fail("动画编码失败，请更换文件后重试。");
   const bytes = deflate(MovieEntity.encode(MovieEntity.create(movie)).finish());
-  self.postMessage({ type: "done", bytes, previews, info: { width, height, fps, frames: count, duration: count / fps * 1000, edgeApplied } }, [bytes.buffer]);
+  self.postMessage({ type: "done", bytes, previews, info: { width, height, fps, frames: count, duration: count / fps * 1000, repeat, edgeApplied } }, [bytes.buffer]);
 }
 
 self.onmessage = async ({ data }) => {
