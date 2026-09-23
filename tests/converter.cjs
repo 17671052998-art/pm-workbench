@@ -77,10 +77,15 @@ async function main() {
     assert.equal(await page.locator("#toolCatalog").isVisible(), true);
     await page.locator("#gifToolOpen").click();
     assert.equal(await page.locator("#gifUsage").inputValue(), "emoji");
-    assert.equal(await page.locator("#gifFps").inputValue(), "20");
+    const setNumeric = (selector, value) => page.locator(selector).evaluate((input, next) => {
+      input.value = String(next);
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }, value);
+    assert.equal(await page.locator("#gifFrames").inputValue(), "12");
+    assert.equal(await page.locator("#gifFps").inputValue(), "95");
     assert.equal(await page.locator("#gifFps").isDisabled(), false);
-    assert.equal(await page.locator('#gifFps option[value="12"]').count(), 1);
-    assert.equal(await page.locator('#gifFps option[value="24"]').count(), 1);
+    assert.equal(await page.locator('#gifFpsPresets option[value="12"]').count(), 1);
+    assert.equal(await page.locator('#gifFpsPresets option[value="24"]').count(), 1);
     assert.equal(await page.locator("#gifRepeat").inputValue(), "1");
     assert.equal(await page.locator("#gifRepeat option").count(), 30);
     assert.deepEqual(await page.locator("#gifRepeat option").evaluateAll((options) => options.map((option) => Number(option.value))), Array.from({ length: 30 }, (_, index) => index + 1));
@@ -95,7 +100,7 @@ async function main() {
     await page.locator("#gifFile").setInputFiles(input);
     await page.waitForFunction(() => !document.querySelector("#gifConvert").disabled);
     assert.match(await page.locator("#gifMetadata").textContent(), /4 帧 · 0.70 秒/);
-    assert.match(await page.locator("#gifOutputHint").textContent(), /21 帧 · 0.70 秒 × 1 次 = 0.70 秒/);
+    assert.match(await page.locator("#gifOutputHint").textContent(), /12 帧 · 0.13 秒 × 1 次 = 0.13 秒/);
     await page.locator("#gifConvert").click();
     await page.locator("#gifResult").waitFor({ state: "visible" });
     const downloadEvent = page.waitForEvent("download");
@@ -155,7 +160,7 @@ async function main() {
       host.remove();
       return { width: item.videoSize.width, height: item.videoSize.height, fps: item.FPS, frames: item.frames, pixels };
     });
-    assert.deepEqual([validation.width, validation.height, validation.fps, validation.frames], [4, 3, 30, 21]);
+    assert.deepEqual([validation.width, validation.height, validation.fps, validation.frames], [4, 3, 95, 12]);
     const expected = (entries) => {
       const pixels = new Array(48).fill(0);
       for (const [index, color] of entries) pixels.splice(index * 4, 4, ...palette[color], 255);
@@ -170,6 +175,8 @@ async function main() {
     await page.locator("#gifUsage").selectOption("emoji");
     assert.equal(await page.locator("#gifResult").isVisible(), false);
     assert.equal(await page.locator("#gifFps").isDisabled(), false);
+    await setNumeric("#gifFrames", 14);
+    await setNumeric("#gifFps", 20);
     await page.locator("#gifRepeat").selectOption("30");
     assert.match(await page.locator("#gifOutputHint").textContent(), /420 帧 · 0.70 秒 × 30 次 = 21.00 秒/);
     await page.locator("#gifConvert").click();
@@ -184,28 +191,30 @@ async function main() {
     assert.match(await page.locator("#gifResultInfo").textContent(), /240 × 240 px · 420 帧 · 20 FPS · 21.00 秒 · 完整播放 30 次/);
     await page.screenshot({ path: "/tmp/pm-workbench-emoji.png", fullPage: true });
     await page.locator("#gifRepeat").selectOption("1");
-    await page.locator("#gifFps").selectOption("12");
-    assert.match(await page.locator("#gifOutputHint").textContent(), /12 FPS · 8 帧/);
+    await setNumeric("#gifFrames", 12);
+    await setNumeric("#gifFps", 12);
+    assert.match(await page.locator("#gifOutputHint").textContent(), /12 FPS · 12 帧/);
     await page.locator("#gifConvert").click();
     await page.locator("#gifResult").waitFor({ state: "visible" });
     const emoji12 = await page.evaluate(async () => {
       const item = await new Promise((resolve, reject) => new SVGA.Parser().load(document.querySelector("#gifDownload").href, resolve, reject));
       return { fps: item.FPS, frames: item.frames };
     });
-    assert.deepEqual(emoji12, { fps: 12, frames: 8 });
-    await page.locator("#gifFps").selectOption("24");
-    assert.match(await page.locator("#gifOutputHint").textContent(), /24 FPS · 17 帧/);
+    assert.deepEqual(emoji12, { fps: 12, frames: 12 });
+    await setNumeric("#gifFps", 24);
+    assert.match(await page.locator("#gifOutputHint").textContent(), /24 FPS · 12 帧/);
     await page.locator("#gifConvert").click();
     await page.locator("#gifResult").waitFor({ state: "visible" });
     const emoji24 = await page.evaluate(async () => {
       const item = await new Promise((resolve, reject) => new SVGA.Parser().load(document.querySelector("#gifDownload").href, resolve, reject));
       return { fps: item.FPS, frames: item.frames };
     });
-    assert.deepEqual(emoji24, { fps: 24, frames: 17 });
+    assert.deepEqual(emoji24, { fps: 24, frames: 12 });
     await page.locator("#gifUsage").selectOption("general");
-    assert.equal(await page.locator("#gifFps").inputValue(), "30");
+    assert.equal(await page.locator("#gifFrames").inputValue(), "12");
+    assert.equal(await page.locator("#gifFps").inputValue(), "24");
     assert.equal(await page.locator("#gifFps").isDisabled(), false);
-    console.log("PASS: emoji SVGA 2.0 / selectable 12, 20 and 24 FPS / 240 square, every repeat option from 1 through 30, exact timeline repetitions, calculated duration, PNG cover and preset restoration.");
+    console.log("PASS: editable frame count and FPS with 12 frames / 95 FPS defaults, 12/20/24 FPS suggestions, 240 square emoji output, exact timeline repetitions and PNG cover.");
 
     // Optional local regression assets stay outside the public repository.
     if (process.env.EDGE_ORIGINAL_SVGA && process.env.EDGE_FIXED_SVGA) {
@@ -256,7 +265,8 @@ async function main() {
       console.log("PASS: actual local animation, all-frame playback/timing and neutral fringe reduction", JSON.stringify(actual.frames));
     }
 
-    await page.locator("#gifFps").selectOption("60");
+    await setNumeric("#gifFrames", 42);
+    await setNumeric("#gifFps", 60);
     assert.equal(await page.locator("#gifResult").isVisible(), false);
     await page.locator("#gifConvert").click();
     await page.locator("#gifResult").waitFor({ state: "visible" });
@@ -283,7 +293,8 @@ async function main() {
     console.log("PASS: aspect-preserving resize, encoded PNG dimensions and single-frame GIF.");
 
     await page.locator("#gifUsage").selectOption("emoji");
-    await page.locator("#gifFps").selectOption("20");
+    await setNumeric("#gifFrames", 2);
+    await setNumeric("#gifFps", 20);
     await page.locator("#gifConvert").click();
     await page.locator("#gifResult").waitFor({ state: "visible" });
     const letterbox = await page.evaluate(async () => {

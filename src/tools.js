@@ -1,7 +1,7 @@
 import { mountBackgroundTool } from "./background-remove.js";
 
 const workerURL = new URL("./gif-worker.js", document.currentScript.src);
-workerURL.search = "v=fps-cover-1";
+workerURL.search = "v=custom-timeline-1";
 let cleanup = () => {};
 
 function render() {
@@ -65,13 +65,15 @@ function render() {
         <div class="tool-settings">
           <h3>2. 设置与转换</h3>
           <label class="form-label" for="gifUsage">用途类型<select id="gifUsage"><option value="emoji">表情包</option><option value="general">通用素材</option></select></label>
-          <div id="gifEmojiPreset"><p id="gifEmojiPresetText" class="tool-output-hint">表情包标准：SVGA 2.0 · 240 × 240 px · 20 FPS</p><p class="tool-hint">保持原 GIF 的播放节奏，帧数和时长根据重复次数计算。等比居中、透明补边，不裁切、不放大小尺寸素材。</p></div>
+          <div id="gifEmojiPreset"><p id="gifEmojiPresetText" class="tool-output-hint">表情包标准：SVGA 2.0 · 240 × 240 px · 12 帧 · 95 FPS</p><p class="tool-hint">按设置的帧数重采样原 GIF 节奏。等比居中、透明补边，不裁切、不放大小尺寸素材。</p></div>
           <div id="gifGeneralOptions" hidden>
           <label class="form-label" for="gifSize">输出尺寸<select id="gifSize"><option value="720">最长边 720 px（推荐）</option><option value="480">最长边 480 px</option><option value="240">最长边 240 px</option><option value="0">保持原始尺寸</option></select></label>
           <p class="tool-hint">保持比例，不放大小尺寸图片。</p>
           </div>
-          <label class="form-label" for="gifFps">输出帧率<select id="gifFps"><option value="12">12 FPS</option><option value="15">15 FPS</option><option value="20" selected>20 FPS（表情包默认）</option><option value="24">24 FPS</option><option value="30">30 FPS（通用素材推荐）</option><option value="60">60 FPS</option></select></label>
-          <p class="tool-hint">按原动画时长匹配播放节奏，可选 12、20、24 FPS；时间精度受帧率影响。</p>
+          <label class="form-label" for="gifFrames">单次动画帧数<input id="gifFrames" type="number" min="1" max="300" step="1" value="12" /></label>
+          <p class="tool-hint">默认 12 帧；重复播放时会完整复制这些帧。</p>
+          <label class="form-label" for="gifFps">输出帧率<input id="gifFps" type="number" min="1" max="120" step="1" value="95" list="gifFpsPresets" /><datalist id="gifFpsPresets"><option value="12"></option><option value="20"></option><option value="24"></option><option value="30"></option><option value="60"></option><option value="95"></option></datalist></label>
+          <p class="tool-hint">默认 95 FPS，可直接输入；12、20、24 FPS 仍可作为快捷值使用。</p>
           <label class="form-label" for="gifRepeat">重复播放次数<select id="gifRepeat"><option value="1">1 次（保持原时长）</option>${Array.from({ length: 29 }, (_, index) => `<option value="${index + 2}">${index + 2} 次</option>`).join("")}</select></label>
           <p class="tool-hint">导出时会连续复制完整动画。例如原时长 0.25 秒，选择 4 次后输出约 1.00 秒。</p>
           <label class="form-label" for="gifEdgeMode">透明边缘处理<select id="gifEdgeMode"><option value="none">保留原始边缘</option><option value="soft">柔化锯齿</option><option value="white">去白边并柔化</option></select></label>
@@ -153,8 +155,6 @@ function mount(root) {
   let disposed = false;
   let busy = false;
   let converterOpen = false;
-  let activeUsage = "emoji";
-  const fpsByUsage = { emoji: "20", general: "30" };
   const disposeBackground = mountBackgroundTool(root, on);
   root.dataset.previewBackground = "black";
   const formatSize = (bytes) => bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 / 1024).toFixed(2)} MB`;
@@ -170,9 +170,12 @@ function mount(root) {
   }
   function setBusy(value) {
     busy = value;
-    ["gifUsage", "gifSize", "gifFps", "gifRepeat", "gifEdgeMode", "gifEdgeTrim", "gifReplace", "gifFile", "gifDrop"].forEach((id) => { $(id).disabled = value; });
+    ["gifUsage", "gifSize", "gifFrames", "gifFps", "gifRepeat", "gifEdgeMode", "gifEdgeTrim", "gifReplace", "gifFile", "gifDrop"].forEach((id) => { $(id).disabled = value; });
     if ($("gifUsage").value === "emoji") $("gifSize").disabled = true;
-    $("gifConvert").disabled = value || !metadata;
+    const frames = Number($("gifFrames").value);
+    const fps = Number($("gifFps").value);
+    const validTiming = Number.isInteger(frames) && frames >= 1 && frames <= 300 && Number.isInteger(fps) && fps >= 1 && fps <= 120;
+    $("gifConvert").disabled = value || !metadata || !validTiming;
     $("gifCancel").hidden = !value;
     $("gifProgressBox").hidden = !value;
     $("gifConvert").textContent = value ? "处理中…" : "开始转换";
@@ -192,7 +195,14 @@ function mount(root) {
   }
   function updateOutputHint() {
     const fps = Number($("gifFps").value);
-    $("gifEmojiPresetText").textContent = `表情包标准：SVGA 2.0 · 240 × 240 px · ${fps} FPS`;
+    const cycleFrames = Number($("gifFrames").value);
+    const validTiming = Number.isInteger(cycleFrames) && cycleFrames >= 1 && cycleFrames <= 300 && Number.isInteger(fps) && fps >= 1 && fps <= 120;
+    $("gifEmojiPresetText").textContent = `表情包标准：SVGA 2.0 · 240 × 240 px · ${cycleFrames || 0} 帧 · ${fps || 0} FPS`;
+    if (!validTiming) {
+      $("gifOutputHint").textContent = "帧数请设置为 1–300 的整数，帧率请设置为 1–120 FPS 的整数。";
+      $("gifConvert").disabled = true;
+      return;
+    }
     if (!metadata) {
       $("gifOutputHint").textContent = "选择 GIF 后可查看预计输出信息。";
       return;
@@ -203,7 +213,6 @@ function mount(root) {
     const width = emoji ? 240 : Math.max(1, Math.round(metadata.width * scale));
     const height = emoji ? 240 : Math.max(1, Math.round(metadata.height * scale));
     const repeat = Number($("gifRepeat").value);
-    const cycleFrames = Math.max(1, Math.round(metadata.duration * fps / 1000));
     const frames = cycleFrames * repeat;
     $("gifOutputHint").textContent = `预计输出：${width} × ${height} px · ${fps} FPS · ${frames} 帧 · ${(cycleFrames / fps).toFixed(2)} 秒 × ${repeat} 次 = ${(frames / fps).toFixed(2)} 秒`;
   }
@@ -273,7 +282,7 @@ function mount(root) {
           status("转换成功，可下载 SVGA 和第一帧封面。");
         }
       };
-      worker.postMessage({ buffer, inspect, options: { usage: $("gifUsage").value, maxEdge: $("gifSize").value, fps: $("gifFps").value, repeat: $("gifRepeat").value, edgeMode: $("gifEdgeMode").value, edgeTrim: $("gifEdgeTrim").value } }, [buffer]);
+      worker.postMessage({ buffer, inspect, options: { usage: $("gifUsage").value, maxEdge: $("gifSize").value, frames: $("gifFrames").value, fps: $("gifFps").value, repeat: $("gifRepeat").value, edgeMode: $("gifEdgeMode").value, edgeTrim: $("gifEdgeTrim").value } }, [buffer]);
     } catch {
       if (!disposed && job === revision) failure("无法读取文件或启动转换，请重新选择文件或更换浏览器。");
     }
@@ -351,14 +360,7 @@ function mount(root) {
     link.click();
     status("已下载实际导出第 1 帧的 72 × 72 PNG 封面。");
   });
-  ["gifUsage", "gifSize", "gifFps", "gifRepeat", "gifEdgeMode", "gifEdgeTrim"].forEach((id) => on($(id), "change", () => {
-    if (id === "gifUsage") {
-      fpsByUsage[activeUsage] = $("gifFps").value;
-      activeUsage = $("gifUsage").value;
-      $("gifFps").value = fpsByUsage[activeUsage];
-    } else if (id === "gifFps") {
-      fpsByUsage[$("gifUsage").value] = $("gifFps").value;
-    }
+  ["gifUsage", "gifSize", "gifFrames", "gifFps", "gifRepeat", "gifEdgeMode", "gifEdgeTrim"].forEach((id) => on($(id), "change", () => {
     const emoji = $("gifUsage").value === "emoji";
     $("gifEmojiPreset").hidden = !emoji;
     $("gifGeneralOptions").hidden = emoji;

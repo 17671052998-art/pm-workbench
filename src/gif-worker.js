@@ -46,13 +46,14 @@ async function convert({ gif, frames, info }, options) {
   if (!["general", "emoji"].includes(usage)) fail("用途类型无效，请重新选择。");
   const emoji = usage === "emoji";
   const fps = Number(options.fps);
+  const cycleCount = Number(options.frames);
   const maxEdge = emoji ? 240 : Number(options.maxEdge);
   const repeat = Number(options.repeat || 1);
   const edgeMode = options.edgeMode || "none";
   const edgeTrim = Number(options.edgeTrim || 1.5);
   if (!["none", "soft", "white"].includes(edgeMode)) fail("边缘处理参数无效，请重新选择。");
   if (![1, 1.5, 2].includes(edgeTrim)) fail("去边宽度无效，请重新选择。");
-  if (![12, 15, 20, 24, 30, 60].includes(fps) || ![0, 240, 480, 720].includes(maxEdge)) fail("转换参数无效，请重新选择。");
+  if (!Number.isInteger(fps) || fps < 1 || fps > 120 || !Number.isInteger(cycleCount) || cycleCount < 1 || cycleCount > 300 || ![0, 240, 480, 720].includes(maxEdge)) fail("转换参数无效，请重新设置。");
   if (!Number.isInteger(repeat) || repeat < 1 || repeat > 30) fail("重复播放次数无效，请重新选择。");
   const scale = maxEdge ? Math.min(1, maxEdge / Math.max(info.width, info.height)) : 1;
   const drawWidth = Math.max(1, Math.round(info.width * scale));
@@ -61,8 +62,8 @@ async function convert({ gif, frames, info }, options) {
   const height = emoji ? 240 : drawHeight;
   const offsetX = Math.floor((width - drawWidth) / 2);
   const offsetY = Math.floor((height - drawHeight) / 2);
-  const cycleCount = Math.max(1, Math.round(info.duration * fps / 1000));
   const count = cycleCount * repeat;
+  if (count > 3000) fail("重复后的总帧数超过 3000 帧，请减少单次帧数或重复次数。");
   if (count / fps > 30) fail("重复后的动画超过 30 秒，请减少重复次数。");
   const timeScale = cycleCount / info.duration;
   const canvas = new OffscreenCanvas(info.width, info.height);
