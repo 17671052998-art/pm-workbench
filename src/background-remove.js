@@ -1,7 +1,7 @@
 import { parseBackgroundIntent } from "./background-intent.js";
 
 const backgroundGifWorkerURL = new URL("./background-gif-worker.js", document.currentScript.src);
-backgroundGifWorkerURL.search = "v=background-gif-1";
+backgroundGifWorkerURL.search = "v=background-gif-2";
 const MAX_EDGE = 2048;
 const MAX_BYTES = 20 * 1024 * 1024;
 
@@ -89,6 +89,54 @@ function floodMask(image, seeds, color, tolerance) {
     if (index >= width) push(index - width);
     if (index < length - width) push(index + width);
   }
+  return mask;
+}
+
+function protectedBackgroundMask(image, color, tolerance) {
+  const { width, height, data } = image;
+  if (width <= 2 || height <= 2) return floodMask(image, [0], color, tolerance);
+  const length = width * height;
+  const seen = new Uint8Array(length);
+  const mask = new Uint8Array(length);
+  const queue = new Uint32Array(length);
+  const limit = (12 + Number(tolerance) * 2) ** 2;
+  let front = 0;
+  let back = 0;
+  const push = (index) => {
+    if (seen[index]) return;
+    seen[index] = 1;
+    if (data[index * 4 + 3] < 16 || colorDistance(data, index, color) > limit) return;
+    mask[index] = 255;
+    queue[back++] = index;
+  };
+  push(width + 1);
+  push(width + width - 2);
+  push((height - 2) * width + 1);
+  push((height - 2) * width + width - 2);
+  while (front < back) {
+    const index = queue[front++];
+    const x = index % width;
+    const y = Math.floor(index / width);
+    if (x > 1) push(index - 1);
+    if (x + 1 < width - 1) push(index + 1);
+    if (y > 1) push(index - width);
+    if (y + 1 < height - 1) push(index + width);
+  }
+  const extend = (index, neighbor) => {
+    if (mask[neighbor] && data[index * 4 + 3] >= 16 && colorDistance(data, index, color) <= limit) mask[index] = 255;
+  };
+  for (let x = 1; x < width - 1; x++) {
+    extend(x, width + x);
+    extend((height - 1) * width + x, (height - 2) * width + x);
+  }
+  for (let y = 1; y < height - 1; y++) {
+    extend(y * width, y * width + 1);
+    extend(y * width + width - 1, y * width + width - 2);
+  }
+  extend(0, width + 1);
+  extend(width - 1, width + width - 2);
+  extend((height - 1) * width, (height - 2) * width + 1);
+  extend(length - 1, (height - 2) * width + width - 2);
   return mask;
 }
 
@@ -190,6 +238,7 @@ export function mountBackgroundTool(root, on) {
     $("bgStatus").classList.toggle("is-error", error);
   };
   const tolerance = () => Number($("bgTolerance").value);
+  const boundaryMode = () => $("bgBoundaryMode").value;
   const render = () => {
     if (edited && !disposed) context.putImageData(edited, 0, 0);
     renderPending = false;
@@ -224,6 +273,7 @@ export function mountBackgroundTool(root, on) {
     gifWorker = null;
     gifBusy = false;
     $("bgTolerance").disabled = false;
+    $("bgBoundaryMode").disabled = false;
   };
   const clearDownload = () => {
     if (downloadURL) URL.revokeObjectURL(downloadURL);
@@ -285,8 +335,10 @@ export function mountBackgroundTool(root, on) {
     if (!original) return;
     const color = dominantBorderColor(original);
     if (!color) { status("未检测到可处理的实色背景，请使用手动工具。", true); return; }
-    const mask = floodMask(original, borderSeeds(color), color, tolerance());
-    status(applyMask(mask, true, color) ? "已移除与图片边缘连通的相近颜色背景，可继续手动修正。" : "没有找到可移除的背景，请调高容差或手动选区。", !mask.some(Boolean));
+    const mask = boundaryMode() === "protect" ? protectedBackgroundMask(original, color, tolerance()) : floodMask(original, borderSeeds(color), color, tolerance());
+    const done = applyMask(mask, true, color);
+    const detail = boundaryMode() === "protect" ? "已开启边缘主体保护。" : "已使用普通边缘连通处理。";
+    status(done ? `已移除相近颜色背景，${detail}可继续手动修正。` : "没有找到可移除的背景，请调高容差或手动选区。", !mask.some(Boolean));
     updateActions();
   };
   const position = (event) => {
@@ -373,6 +425,7 @@ export function mountBackgroundTool(root, on) {
     $("bgFileName").textContent = `${file.name} · 正在处理全部帧`;
     $("bgGifInfo").textContent = "正在解析动画、移除每一帧背景并重新编码…";
     $("bgTolerance").disabled = true;
+    $("bgBoundaryMode").disabled = true;
     $("bgFile").value = "";
     updateActions();
     status("正在读取 GIF 动画…");
@@ -411,7 +464,7 @@ export function mountBackgroundTool(root, on) {
         updateActions();
         status(removedPixels ? "GIF 全部帧处理完成，可预览并下载透明动画。" : "未检测到可移除的边缘背景，已保留原动画。", !removedPixels);
       };
-      gifWorker.postMessage({ buffer, tolerance: tolerance() }, [buffer]);
+      gifWorker.postMessage({ buffer, tolerance: tolerance(), boundaryMode: boundaryMode() }, [buffer]);
     } catch {
       if (disposed || job !== revision) return;
       stopGifWorker();
@@ -565,6 +618,18 @@ export function mountBackgroundTool(root, on) {
     $("bgGifPreview").hidden = true;
     updateActions();
     status("颜色容差已更新，请点击“重新处理所有帧”。");
+  });
+  on($("bgBoundaryMode"), "change", () => {
+    clearIntentPlan();
+    if (animated) {
+      clearDownload();
+      $("bgGifPreview").removeAttribute("src");
+      $("bgGifPreview").hidden = true;
+      updateActions();
+      status("主体保护方式已更新，请点击“重新处理所有帧”。");
+      return;
+    }
+    if (original) status("主体保护方式已更新，请点击“重新自动移除背景”。");
   });
   on($("bgBrushSize"), "input", () => { $("bgBrushSizeValue").textContent = $("bgBrushSize").value; });
   on($("bgPreviewBackground"), "change", () => { $("bgCanvasFrame").dataset.background = $("bgPreviewBackground").value; });

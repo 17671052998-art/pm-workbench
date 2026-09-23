@@ -38,38 +38,69 @@ function dominantBorderColor(image) {
   return top ? [top.red / top.count, top.green / top.count, top.blue / top.count] : null;
 }
 
-function removeConnectedBackground(image, tolerance) {
+function removeConnectedBackground(image, tolerance, boundaryMode) {
   const { width, height, data } = image;
   const color = dominantBorderColor(image);
   if (!color) return 0;
   const length = width * height;
   const seen = new Uint8Array(length);
+  const background = new Uint8Array(length);
   const queue = new Uint32Array(length);
   const limit = (12 + tolerance * 2) ** 2;
   let front = 0;
   let back = 0;
-  let removed = 0;
   const push = (index) => {
     if (seen[index]) return;
     seen[index] = 1;
     if (data[index * 4 + 3] < 16 || colorDistance(data, index, color) > limit) return;
+    background[index] = 1;
     queue[back++] = index;
   };
-  for (let x = 0; x < width; x++) { push(x); push((height - 1) * width + x); }
-  for (let y = 1; y < height - 1; y++) { push(y * width); push(y * width + width - 1); }
+  const protectedBoundary = boundaryMode === "protect" && width > 2 && height > 2;
+  if (protectedBoundary) {
+    push(width + 1);
+    push(width + width - 2);
+    push((height - 2) * width + 1);
+    push((height - 2) * width + width - 2);
+  } else {
+    for (let x = 0; x < width; x++) { push(x); push((height - 1) * width + x); }
+    for (let y = 1; y < height - 1; y++) { push(y * width); push(y * width + width - 1); }
+  }
   while (front < back) {
     const index = queue[front++];
+    const x = index % width;
+    const y = Math.floor(index / width);
+    if (x > (protectedBoundary ? 1 : 0)) push(index - 1);
+    if (x + 1 < width - (protectedBoundary ? 1 : 0)) push(index + 1);
+    if (y > (protectedBoundary ? 1 : 0)) push(index - width);
+    if (y + 1 < height - (protectedBoundary ? 1 : 0)) push(index + width);
+  }
+  if (protectedBoundary) {
+    const extend = (index, neighbor) => {
+      if (background[neighbor] && data[index * 4 + 3] >= 16 && colorDistance(data, index, color) <= limit) background[index] = 1;
+    };
+    for (let x = 1; x < width - 1; x++) {
+      extend(x, width + x);
+      extend((height - 1) * width + x, (height - 2) * width + x);
+    }
+    for (let y = 1; y < height - 1; y++) {
+      extend(y * width, y * width + 1);
+      extend(y * width + width - 1, y * width + width - 2);
+    }
+    extend(0, width + 1);
+    extend(width - 1, width + width - 2);
+    extend((height - 1) * width, (height - 2) * width + 1);
+    extend(length - 1, (height - 2) * width + width - 2);
+  }
+  let removed = 0;
+  for (let index = 0; index < length; index++) {
+    if (!background[index]) continue;
     const offset = index * 4;
     data[offset] = 0;
     data[offset + 1] = 0;
     data[offset + 2] = 0;
     data[offset + 3] = 0;
     removed++;
-    const x = index % width;
-    if (x > 0) push(index - 1);
-    if (x + 1 < width) push(index + 1);
-    if (index >= width) push(index - width);
-    if (index < length - width) push(index + width);
   }
   return removed;
 }
@@ -93,7 +124,7 @@ function loopCount(gif) {
   return blocks?.length >= 3 && blocks[0] === 1 ? blocks[1] | blocks[2] << 8 : -1;
 }
 
-async function processGif(buffer, tolerance) {
+async function processGif(buffer, tolerance, boundaryMode) {
   if (!buffer || buffer.byteLength > MAX_BYTES) fail("请选择不超过 20 MB 的 GIF 文件。");
   const bytes = new Uint8Array(buffer);
   const signature = new TextDecoder().decode(bytes.subarray(0, 6));
@@ -136,7 +167,7 @@ async function processGif(buffer, tolerance) {
     patchContext.putImageData(new ImageData(frame.patch, patch.width, patch.height), 0, 0);
     context.drawImage(patch, frame.dims.left, frame.dims.top);
     const image = context.getImageData(0, 0, width, height);
-    removedPixels += removeConnectedBackground(image, tolerance);
+    removedPixels += removeConnectedBackground(image, tolerance, boundaryMode);
     normalizeTransparency(image.data);
     const palette = quantize(image.data, 256, { format: "rgba4444", oneBitAlpha: 127, clearAlpha: true });
     const indexed = applyPalette(image.data, palette, "rgba4444");
@@ -162,7 +193,8 @@ self.onmessage = async ({ data }) => {
   try {
     const tolerance = Number(data.tolerance);
     if (!Number.isFinite(tolerance) || tolerance < 0 || tolerance > 100) fail("颜色容差无效，请重新设置。");
-    await processGif(data.buffer, tolerance);
+    const boundaryMode = data.boundaryMode === "standard" ? "standard" : "protect";
+    await processGif(data.buffer, tolerance, boundaryMode);
   } catch (error) {
     self.postMessage({ type: "error", message: error instanceof Error ? error.message : "GIF 处理失败，请更换文件后重试。" });
   }
