@@ -41,7 +41,7 @@ function render() {
             <circle cx="245" cy="67" r="15" fill="#f7bf9b"/><path d="M214 114c3-23 15-36 31-36s28 13 31 36" fill="#f3698b"/>
           </svg>
         </span>
-        <span class="tool-card-content"><span class="tool-card-title">移除图片背景</span><span class="tool-card-description">自动去除相近色背景，手动选区精修透明边缘</span><span class="tool-card-meta"><span class="badge green">可用</span><span>进入工具 <b aria-hidden="true">→</b></span></span></span>
+        <span class="tool-card-content"><span class="tool-card-title">移除图片背景</span><span class="tool-card-description">静态图片精修，GIF 动画逐帧去除背景并透明导出</span><span class="tool-card-meta"><span class="badge green">可用</span><span>进入工具 <b aria-hidden="true">→</b></span></span></span>
       </button>
       </div>
     </section>
@@ -87,14 +87,14 @@ function render() {
       <div class="tool-notes"><strong>使用说明</strong><p>文件仅在当前浏览器中处理，不上传服务器。离开工具箱或退出登录会清除本次文件；转换完成后请下载保存。</p><p>输出为 SVGA 2.0 逐帧位图动画，不会自动转为矢量，文件可能增大。这里的重复次数会直接写入动画时间轴；播放器仍可对整个 SVGA 再设置循环播放。</p></div>
     </section>
     <section id="bgWorkspace" class="panel tool-workspace bg-workspace" aria-labelledby="bgTitle" hidden>
-      <header class="panel-head"><div class="tool-workspace-title"><button id="bgToolBack" class="tool-back" type="button" aria-label="返回工具箱">←</button><div><h2 id="bgTitle" tabindex="-1">移除图片背景</h2><p>自动去除相近色背景，再通过选区和画笔修正。</p></div></div><span class="doc-tag">图片处理</span></header>
+      <header class="panel-head"><div class="tool-workspace-title"><button id="bgToolBack" class="tool-back" type="button" aria-label="返回工具箱">←</button><div><h2 id="bgTitle" tabindex="-1">移除图片背景</h2><p>支持静态图片和 GIF 动画逐帧移除背景。</p></div></div><span class="doc-tag">图片处理</span></header>
       <div class="bg-columns">
         <div class="bg-preview-column">
           <div class="bg-preview-head"><div><h3>图片预览</h3><p id="bgFileName">尚未选择图片</p></div><label class="tool-preview-control">预览底色<select id="bgPreviewBackground"><option value="checker">透明棋盘格</option><option value="black">黑色</option><option value="white">白色</option></select></label></div>
-          <input id="bgFile" class="tool-file-input" type="file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp" aria-label="选择要移除背景的图片" />
+          <input id="bgFile" class="tool-file-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif,.png,.jpg,.jpeg,.webp,.gif" aria-label="选择要移除背景的图片或 GIF" />
           <div id="bgDrop" class="bg-stage">
-            <div id="bgEmpty" class="bg-empty"><svg aria-hidden="true"><use href="#i-upload"></use></svg><strong>上传一张图片开始处理</strong><span>支持 PNG、JPG、WebP · 不超过 20 MB · 最长边 2048 px</span><button id="bgChoose" class="btn primary" type="button">选择图片</button></div>
-            <div id="bgCanvasArea" class="bg-canvas-area" hidden><div id="bgCanvasFrame" class="bg-canvas-frame" data-background="checker" data-mode="wand"><canvas id="bgCanvas" aria-label="图片处理结果"></canvas><canvas id="bgOverlay" aria-label="图片选区操作区"></canvas></div></div>
+            <div id="bgEmpty" class="bg-empty"><svg aria-hidden="true"><use href="#i-upload"></use></svg><strong>上传图片或 GIF 开始处理</strong><span>支持 PNG、JPG、WebP、GIF · 不超过 20 MB · 最长边 2048 px</span><button id="bgChoose" class="btn primary" type="button">选择文件</button></div>
+            <div id="bgCanvasArea" class="bg-canvas-area" hidden><div id="bgCanvasFrame" class="bg-canvas-frame" data-background="checker" data-mode="wand"><canvas id="bgCanvas" aria-label="图片处理结果"></canvas><canvas id="bgOverlay" aria-label="图片选区操作区"></canvas><img id="bgGifPreview" alt="透明 GIF 动画处理结果" hidden /></div></div>
           </div>
           <p id="bgStatus" class="tool-status bg-status" role="status" aria-live="polite">图片只在当前浏览器处理，不上传服务器。</p>
         </div>
@@ -102,7 +102,7 @@ function render() {
           <h3>处理与导出</h3>
           <p class="tool-hint">上传后会自动移除与图片边缘连通的相近颜色背景。适合纯色或近似纯色背景，复杂背景请手动修正。</p>
           <div id="bgControls" hidden>
-            <section class="bg-intent" aria-labelledby="bgIntentTitle">
+            <section id="bgIntentSection" class="bg-intent" aria-labelledby="bgIntentTitle">
               <h4 id="bgIntentTitle">智能指令 · 本地识别</h4>
               <p class="tool-hint">描述要处理的颜色和位置，先查看识别步骤，再执行。</p>
               <label class="form-label" for="bgIntentInput">想处理哪里？<textarea id="bgIntentInput" rows="2" maxlength="200" placeholder="例如：去掉左上角白色背景，然后擦除下方 20%"></textarea></label>
@@ -114,7 +114,8 @@ function render() {
             <label class="form-label" for="bgTolerance">颜色容差 <strong id="bgToleranceValue">22</strong><input id="bgTolerance" class="bg-range" type="range" min="0" max="100" value="22" /></label>
             <p class="tool-hint">数值越高，选中的近似颜色越多；过高可能误删主体。</p>
             <button id="bgAuto" class="btn secondary bg-auto-btn" type="button" disabled>重新自动移除背景</button>
-            <h4>手动修正</h4>
+            <div id="bgGifNotice" class="bg-gif-notice" hidden><strong>GIF 逐帧处理</strong><p id="bgGifInfo">会保留原帧节奏与循环信息，重新编码为透明 GIF。</p><p>GIF 透明度只有透明/不透明两档；需要精修单帧时，建议先拆帧处理。</p></div>
+            <div id="bgManualControls"><h4>手动修正</h4>
             <div class="bg-mode-grid" role="group" aria-label="手动处理方式">
               <button class="bg-mode active" data-bg-mode="wand" aria-pressed="true" type="button">相近颜色点选</button>
               <button class="bg-mode" data-bg-mode="lasso" aria-pressed="false" type="button">套索选区</button>
@@ -123,12 +124,13 @@ function render() {
             </div>
             <div id="bgBrushControl" hidden><label class="form-label" for="bgBrushSize">画笔大小 <strong id="bgBrushSizeValue">32</strong> px<input id="bgBrushSize" class="bg-range" type="range" min="4" max="160" value="32" /></label></div>
             <p class="tool-hint">点选会移除相近颜色的连续区域；套索圈选后松开即可擦除。误删时可用恢复画笔或撤销。</p>
-            <div class="bg-edit-actions"><button id="bgUndo" class="btn secondary" type="button" disabled>撤销</button><button id="bgReset" class="btn secondary" type="button" disabled>恢复原图</button><button id="bgReplace" class="btn secondary" type="button">更换图片</button></div>
+            <div class="bg-edit-actions"><button id="bgUndo" class="btn secondary" type="button" disabled>撤销</button><button id="bgReset" class="btn secondary" type="button" disabled>恢复原图</button></div></div>
+            <div class="bg-edit-actions"><button id="bgReplace" class="btn secondary" type="button">更换文件</button></div>
             <button id="bgDownload" class="btn primary bg-download" type="button" disabled>下载透明 PNG</button>
           </div>
         </div>
       </div>
-      <div class="tool-notes"><strong>使用说明</strong><p>自动处理依据图片边缘的相近颜色，不是 AI 人像分割。复杂纹理或与主体颜色相近的背景，请使用套索或画笔手动调整。导出的 PNG 保留原图尺寸和透明通道。</p></div>
+      <div class="tool-notes"><strong>使用说明</strong><p>自动处理依据每张图片或每一帧边缘的相近颜色，不是 AI 人像分割。静态图片可用套索或画笔手动调整；GIF 会逐帧自动处理并保留动画节奏和循环信息。</p></div>
     </section>`;
 }
 

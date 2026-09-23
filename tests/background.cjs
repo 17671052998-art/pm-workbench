@@ -3,6 +3,23 @@ const fs = require("node:fs/promises");
 const http = require("node:http");
 const path = require("node:path");
 const { chromium } = require("playwright");
+const { GIFEncoder } = require("gifenc");
+const { parseGIF, decompressFrame } = require("gifuct-js");
+
+function animatedFixture() {
+  const encoder = GIFEncoder();
+  const palette = [[255, 255, 255], [225, 30, 65], [30, 90, 220]];
+  const makeFrame = (left, color) => {
+    const pixels = new Uint8Array(20 * 20);
+    for (let y = 6; y < 14; y++) for (let x = left; x < left + 6; x++) pixels[y * 20 + x] = color;
+    return pixels;
+  };
+  encoder.writeFrame(makeFrame(3, 1), 20, 20, { palette, delay: 100, repeat: 2 });
+  encoder.writeFrame(makeFrame(7, 2), 20, 20, { palette, delay: 200 });
+  encoder.writeFrame(makeFrame(11, 1), 20, 20, { palette, delay: 300 });
+  encoder.finish();
+  return Buffer.from(encoder.bytes());
+}
 
 async function main() {
   const project = path.resolve(__dirname, "..");
@@ -32,6 +49,7 @@ async function main() {
     await page.locator("#loginUsername").fill("admin");
     await page.locator("#loginPassword").fill("admin");
     await page.locator("#loginForm").evaluate((form) => form.requestSubmit());
+    await page.locator("#appShell").waitFor({ state: "visible" });
     await page.locator('[data-page="tools"]').click();
     assert.equal(await page.locator("#bgWorkspace").isVisible(), false);
     assert.equal(await page.locator(".tool-card").count(), 2);
@@ -189,12 +207,46 @@ async function main() {
     await page.locator("#bgAnalyzeIntent").click();
     await page.locator("#bgExecuteIntent").click();
     assert.equal((await pixel(5, 5))[3], 0);
+
+    await page.locator("#bgFile").setInputFiles({ name: "sequence.gif", mimeType: "image/gif", buffer: animatedFixture() });
+    await page.waitForFunction(() => document.querySelector("#bgStatus").textContent.includes("全部帧处理完成"));
+    assert.equal(await page.locator("#bgIntentSection").isVisible(), false);
+    assert.equal(await page.locator("#bgManualControls").isVisible(), false);
+    assert.equal(await page.locator("#bgGifNotice").isVisible(), true);
+    assert.match(await page.locator("#bgFileName").textContent(), /20 × 20 px · 3 帧/);
+    assert.match(await page.locator("#bgGifInfo").textContent(), /3 帧 · 0.60 秒 · 循环参数 2/);
+    assert.equal(await page.locator("#bgDownload").textContent(), "下载透明 GIF");
+    assert.match(await page.locator("#bgGifPreview").getAttribute("src"), /^blob:/);
+    const gifDownloadEvent = page.waitForEvent("download");
+    await page.locator("#bgDownload").click();
+    const gifDownload = await gifDownloadEvent;
+    assert.equal(gifDownload.suggestedFilename(), "sequence-transparent.gif");
+    const gifBytes = await fs.readFile(await gifDownload.path());
+    assert.equal(gifBytes.subarray(0, 6).toString("ascii"), "GIF89a");
+    const parsedGif = parseGIF(gifBytes.buffer.slice(gifBytes.byteOffset, gifBytes.byteOffset + gifBytes.byteLength));
+    const gifFrames = parsedGif.frames.filter((frame) => frame.image);
+    assert.equal(gifFrames.length, 3);
+    assert.deepEqual(gifFrames.map((frame) => frame.gce.delay), [10, 20, 30]);
+    assert.deepEqual(Array.from(parsedGif.frames.find((frame) => frame.application)?.application.blocks), [1, 2, 0]);
+    const outputFrames = gifFrames.map((frame) => decompressFrame(frame, parsedGif.gct, true));
+    assert.deepEqual(outputFrames.map((frame) => [frame.dims.width, frame.dims.height]), [[20, 20], [20, 20], [20, 20]]);
+    for (const frame of outputFrames) assert.equal(frame.patch[3], 0);
+    assert.equal(outputFrames[0].patch[(8 * 20 + 5) * 4 + 3], 255);
+    assert.equal(outputFrames[1].patch[(8 * 20 + 9) * 4 + 3], 255);
+    assert.equal(outputFrames[2].patch[(8 * 20 + 13) * 4 + 3], 255);
+    await page.screenshot({ path: "/tmp/pm-workbench-background-gif.png", fullPage: true });
+    await page.locator("#bgTolerance").fill("28");
+    assert.equal(await page.locator("#bgDownload").isDisabled(), true);
+    assert.match(await page.locator("#bgStatus").textContent(), /重新处理所有帧/);
+    await page.locator("#bgAuto").click();
+    await page.waitForFunction(() => document.querySelector("#bgStatus").textContent.includes("全部帧处理完成"));
+    assert.equal(await page.locator("#bgDownload").isDisabled(), false);
     await page.locator("#bgToolBack").click();
     assert.equal(await page.locator("#toolCatalog").isVisible(), true);
     await page.locator("#gifToolOpen").click();
     assert.equal(await page.locator("#toolWorkspace").isVisible(), true);
     assert.deepEqual(errors, []);
-    console.log("PASS: local intent recognition, multi-step plans, unsupported-object guard, region/color removal and restoration, single-step undo, manual editing, PNG export and GIF coexistence.");
+    console.log("PASS: local intent recognition, manual static editing and PNG export, plus all-frame GIF background removal with frame timing, loop metadata, preview, reprocessing and transparent GIF export.");
   } finally {
     await browser?.close();
     await new Promise((resolve) => server.close(resolve));

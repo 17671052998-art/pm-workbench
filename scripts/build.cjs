@@ -3,11 +3,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 buildSync({
-  entryPoints: ["src/gif-worker.js", "src/tools.js"],
+  entryPoints: ["src/gif-worker.js", "src/background-gif-worker.js", "src/tools.js"],
   bundle: true, minify: true, format: "iife", target: "es2020", outdir: "assets",
 });
 
-const licenses = ["gifuct-js", "js-binary-schema-parser", "pako", "protobufjs"].map((name) => {
+const licenses = ["gifenc", "gifuct-js", "js-binary-schema-parser", "pako", "protobufjs"].map((name) => {
   let directory = path.dirname(require.resolve(name, { paths: [process.cwd(), path.dirname(require.resolve("gifuct-js"))] }));
   while (!fs.existsSync(path.join(directory, "package.json"))) {
     const parent = path.dirname(directory);

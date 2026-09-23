@@ -1,5 +1,7 @@
 import { parseBackgroundIntent } from "./background-intent.js";
 
+const backgroundGifWorkerURL = new URL("./background-gif-worker.js", document.currentScript.src);
+backgroundGifWorkerURL.search = "v=background-gif-1";
 const MAX_EDGE = 2048;
 const MAX_BYTES = 20 * 1024 * 1024;
 
@@ -178,6 +180,10 @@ export function mountBackgroundTool(root, on) {
   let disposed = false;
   let renderPending = false;
   let intentPlan = null;
+  let animated = false;
+  let gifFile = null;
+  let gifWorker = null;
+  let gifBusy = false;
 
   const status = (message, error = false) => {
     $("bgStatus").textContent = message;
@@ -201,10 +207,39 @@ export function mountBackgroundTool(root, on) {
     $("bgUndo").disabled = false;
   };
   const updateActions = () => {
+    if (animated) {
+      $("bgUndo").disabled = true;
+      $("bgReset").disabled = true;
+      $("bgDownload").disabled = !downloadURL || gifBusy;
+      $("bgAuto").disabled = !gifFile || gifBusy;
+      return;
+    }
     $("bgUndo").disabled = !history.length;
     $("bgReset").disabled = !original;
     $("bgDownload").disabled = !original;
     $("bgAuto").disabled = !original;
+  };
+  const stopGifWorker = () => {
+    gifWorker?.terminate();
+    gifWorker = null;
+    gifBusy = false;
+    $("bgTolerance").disabled = false;
+  };
+  const clearDownload = () => {
+    if (downloadURL) URL.revokeObjectURL(downloadURL);
+    downloadURL = null;
+  };
+  const setAnimatedMode = (value) => {
+    animated = value;
+    $("bgIntentSection").hidden = value;
+    $("bgManualControls").hidden = value;
+    $("bgGifNotice").hidden = !value;
+    canvas.hidden = value;
+    overlay.hidden = value;
+    $("bgGifPreview").hidden = true;
+    if (!value) $("bgGifPreview").removeAttribute("src");
+    $("bgAuto").textContent = value ? "重新处理所有帧" : "重新自动移除背景";
+    $("bgDownload").textContent = value ? "下载透明 GIF" : "下载透明 PNG";
   };
   const applySelection = (mask, action = "remove", soften = false, backgroundColor = null, recordUndo = true, deferRender = false) => {
     const selection = soften ? softenMask(mask, edited.width, edited.height) : mask;
@@ -320,10 +355,80 @@ export function mountBackgroundTool(root, on) {
     const count = Math.max(1, Math.ceil(distance / step));
     for (let i = 1; i <= count; i++) brushAt({ x: from.x + (to.x - from.x) * i / count, y: from.y + (to.y - from.y) * i / count });
   };
+  const processAnimatedGif = async (file) => {
+    stopGifWorker();
+    clearDownload();
+    const job = ++revision;
+    gifFile = file;
+    gifBusy = true;
+    original = null;
+    edited = null;
+    history = [];
+    clearIntentPlan();
+    setAnimatedMode(true);
+    $("bgCanvasArea").hidden = false;
+    $("bgEmpty").hidden = true;
+    $("bgControls").hidden = false;
+    $("bgGifPreview").removeAttribute("src");
+    $("bgFileName").textContent = `${file.name} · 正在处理全部帧`;
+    $("bgGifInfo").textContent = "正在解析动画、移除每一帧背景并重新编码…";
+    $("bgTolerance").disabled = true;
+    $("bgFile").value = "";
+    updateActions();
+    status("正在读取 GIF 动画…");
+    try {
+      const buffer = await file.arrayBuffer();
+      if (disposed || job !== revision) return;
+      gifWorker = new Worker(backgroundGifWorkerURL);
+      gifWorker.onerror = (event) => {
+        event.preventDefault();
+        if (disposed || job !== revision) return;
+        stopGifWorker();
+        updateActions();
+        status("GIF 处理工具加载失败，请刷新页面或使用新版 Chrome / Edge。", true);
+      };
+      gifWorker.onmessage = ({ data }) => {
+        if (disposed || job !== revision) return;
+        if (data.type === "progress") {
+          status(`${data.message} · ${data.value}%`);
+          return;
+        }
+        if (data.type === "error") {
+          stopGifWorker();
+          updateActions();
+          status(`无法处理 GIF：${data.message}`, true);
+          return;
+        }
+        stopGifWorker();
+        const blob = new Blob([data.bytes], { type: "image/gif" });
+        downloadURL = URL.createObjectURL(blob);
+        $("bgGifPreview").src = downloadURL;
+        $("bgGifPreview").hidden = false;
+        const { width, height, frames, duration, repeat, removedPixels } = data.info;
+        const loop = repeat === 0 ? "无限循环" : repeat < 0 ? "播放一次" : `循环参数 ${repeat}`;
+        $("bgFileName").textContent = `${file.name} · ${width} × ${height} px · ${frames} 帧`;
+        $("bgGifInfo").textContent = `${frames} 帧 · ${(duration / 1000).toFixed(2)} 秒 · ${loop} · 已透明化 ${removedPixels.toLocaleString()} 个帧像素`;
+        updateActions();
+        status(removedPixels ? "GIF 全部帧处理完成，可预览并下载透明动画。" : "未检测到可移除的边缘背景，已保留原动画。", !removedPixels);
+      };
+      gifWorker.postMessage({ buffer, tolerance: tolerance() }, [buffer]);
+    } catch {
+      if (disposed || job !== revision) return;
+      stopGifWorker();
+      updateActions();
+      status("GIF 文件无法读取，请重新选择。", true);
+    }
+  };
   const choose = async (file) => {
     if (!file) return;
-    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) { status("请选择 PNG、JPG 或 WebP 图片。", true); return; }
+    const isGif = file.type === "image/gif" || /\.gif$/i.test(file.name);
+    if (!["image/png", "image/jpeg", "image/webp", "image/gif"].includes(file.type) && !isGif) { status("请选择 PNG、JPG、WebP 或 GIF 文件。", true); return; }
     if (file.size > MAX_BYTES) { status("图片超过 20 MB，请先压缩后重试。", true); return; }
+    if (isGif) return processAnimatedGif(file);
+    stopGifWorker();
+    clearDownload();
+    gifFile = null;
+    setAnimatedMode(false);
     const job = ++revision;
     status("正在读取图片…");
     let bitmap;
@@ -439,12 +544,28 @@ export function mountBackgroundTool(root, on) {
   on($("bgDrop"), "dragover", (event) => { event.preventDefault(); $("bgDrop").classList.add("is-dragging"); });
   on($("bgDrop"), "dragleave", () => $("bgDrop").classList.remove("is-dragging"));
   on($("bgDrop"), "drop", (event) => { event.preventDefault(); $("bgDrop").classList.remove("is-dragging"); if (event.dataTransfer.files.length === 1) choose(event.dataTransfer.files[0]); else status("每次请选择一张图片。", true); });
-  on($("bgAuto"), "click", () => { clearIntentPlan(); autoRemove(); });
+  on($("bgAuto"), "click", () => {
+    if (animated) {
+      if (gifFile) processAnimatedGif(gifFile);
+      return;
+    }
+    clearIntentPlan();
+    autoRemove();
+  });
   on($("bgAnalyzeIntent"), "click", analyzeIntent);
   on($("bgExecuteIntent"), "click", executeIntent);
   on($("bgIntentInput"), "input", clearIntentPlan);
   root.querySelectorAll("[data-bg-example]").forEach((button) => on(button, "click", () => { $("bgIntentInput").value = button.dataset.bgExample; analyzeIntent(); }));
-  on($("bgTolerance"), "input", () => { $("bgToleranceValue").textContent = tolerance(); clearIntentPlan(); });
+  on($("bgTolerance"), "input", () => {
+    $("bgToleranceValue").textContent = tolerance();
+    clearIntentPlan();
+    if (!animated || gifBusy) return;
+    clearDownload();
+    $("bgGifPreview").removeAttribute("src");
+    $("bgGifPreview").hidden = true;
+    updateActions();
+    status("颜色容差已更新，请点击“重新处理所有帧”。");
+  });
   on($("bgBrushSize"), "input", () => { $("bgBrushSizeValue").textContent = $("bgBrushSize").value; });
   on($("bgPreviewBackground"), "change", () => { $("bgCanvasFrame").dataset.background = $("bgPreviewBackground").value; });
   root.querySelectorAll("[data-bg-mode]").forEach((button) => on(button, "click", () => {
@@ -511,6 +632,15 @@ export function mountBackgroundTool(root, on) {
     status("已恢复原图。");
   });
   on($("bgDownload"), "click", () => {
+    if (animated) {
+      if (!downloadURL || !gifFile) return;
+      const link = document.createElement("a");
+      link.href = downloadURL;
+      link.download = `${gifFile.name.replace(/\.gif$/i, "") || "animation"}-transparent.gif`;
+      link.click();
+      status("透明 GIF 已下载，动画帧与播放节奏已保留。");
+      return;
+    }
     if (!edited) return;
     canvas.toBlob((blob) => {
       if (!blob || disposed) { status("PNG 导出失败，请重试。", true); return; }
@@ -527,9 +657,11 @@ export function mountBackgroundTool(root, on) {
   return () => {
     disposed = true;
     revision++;
-    if (downloadURL) URL.revokeObjectURL(downloadURL);
+    stopGifWorker();
+    clearDownload();
     original = null;
     edited = null;
+    gifFile = null;
     history = [];
   };
 }

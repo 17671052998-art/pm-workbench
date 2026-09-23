@@ -46,6 +46,7 @@ async function main() {
     await page.locator("#loginUsername").fill("admin");
     await page.locator("#loginPassword").fill("admin");
     await page.locator("#loginForm").evaluate((form) => form.requestSubmit());
+    await page.locator("#appShell").waitFor({ state: "visible" });
     await page.locator("#adminSettingsNav").click();
     assert.equal(await page.locator("#accountCreateForm").isVisible(), true);
     await page.locator("#accountUsername").fill("demo.user");
