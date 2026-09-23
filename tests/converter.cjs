@@ -77,6 +77,10 @@ async function main() {
     assert.equal(await page.locator("#toolCatalog").isVisible(), true);
     await page.locator("#gifToolOpen").click();
     assert.equal(await page.locator("#gifUsage").inputValue(), "emoji");
+    assert.equal(await page.locator("#gifFps").inputValue(), "20");
+    assert.equal(await page.locator("#gifFps").isDisabled(), false);
+    assert.equal(await page.locator('#gifFps option[value="12"]').count(), 1);
+    assert.equal(await page.locator('#gifFps option[value="24"]').count(), 1);
     assert.equal(await page.locator("#gifRepeat").inputValue(), "1");
     assert.equal(await page.locator("#gifRepeat option").count(), 30);
     assert.deepEqual(await page.locator("#gifRepeat option").evaluateAll((options) => options.map((option) => Number(option.value))), Array.from({ length: 30 }, (_, index) => index + 1));
@@ -99,6 +103,30 @@ async function main() {
     const download = await downloadEvent;
     assert.equal(download.suggestedFilename(), "animation.svga");
     assert.ok((await fs.stat(await download.path())).size > 100);
+    const coverDownloadEvent = page.waitForEvent("download");
+    await page.locator("#gifCoverDownload").click();
+    const coverDownload = await coverDownloadEvent;
+    assert.equal(coverDownload.suggestedFilename(), "animation-cover-72x72.png");
+    const coverBytes = await fs.readFile(await coverDownload.path());
+    assert.equal(coverBytes.subarray(1, 4).toString("ascii"), "PNG");
+    assert.equal(coverBytes.readUInt32BE(16), 72);
+    assert.equal(coverBytes.readUInt32BE(20), 72);
+    const coverPixels = await page.evaluate(async (base64) => {
+      const image = new Image();
+      image.src = `data:image/png;base64,${base64}`;
+      await image.decode();
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = 72;
+      const context = canvas.getContext("2d");
+      context.drawImage(image, 0, 0);
+      return {
+        firstFrame: Array.from(context.getImageData(9, 18, 1, 1).data),
+        transparentCorner: Array.from(context.getImageData(71, 71, 1, 1).data),
+      };
+    }, coverBytes.toString("base64"));
+    assert.deepEqual(coverPixels.firstFrame.slice(0, 3), [255, 0, 0]);
+    assert.ok(coverPixels.firstFrame[3] > 200);
+    assert.equal(coverPixels.transparentCorner[3], 0);
 
     // Validate with the independent official SVGA player, not the encoder's schema.
     await page.addScriptTag({ path: path.join(project, "node_modules/svgaplayerweb/build/svga.min.js") });
@@ -141,7 +169,7 @@ async function main() {
 
     await page.locator("#gifUsage").selectOption("emoji");
     assert.equal(await page.locator("#gifResult").isVisible(), false);
-    assert.equal(await page.locator("#gifFps").isDisabled(), true);
+    assert.equal(await page.locator("#gifFps").isDisabled(), false);
     await page.locator("#gifRepeat").selectOption("30");
     assert.match(await page.locator("#gifOutputHint").textContent(), /420 帧 · 0.70 秒 × 30 次 = 21.00 秒/);
     await page.locator("#gifConvert").click();
@@ -155,11 +183,29 @@ async function main() {
     assert.deepEqual(emoji.timeline, Array.from({ length: 30 }, () => emojiCycle).flat());
     assert.match(await page.locator("#gifResultInfo").textContent(), /240 × 240 px · 420 帧 · 20 FPS · 21.00 秒 · 完整播放 30 次/);
     await page.screenshot({ path: "/tmp/pm-workbench-emoji.png", fullPage: true });
-    await page.locator("#gifUsage").selectOption("general");
     await page.locator("#gifRepeat").selectOption("1");
+    await page.locator("#gifFps").selectOption("12");
+    assert.match(await page.locator("#gifOutputHint").textContent(), /12 FPS · 8 帧/);
+    await page.locator("#gifConvert").click();
+    await page.locator("#gifResult").waitFor({ state: "visible" });
+    const emoji12 = await page.evaluate(async () => {
+      const item = await new Promise((resolve, reject) => new SVGA.Parser().load(document.querySelector("#gifDownload").href, resolve, reject));
+      return { fps: item.FPS, frames: item.frames };
+    });
+    assert.deepEqual(emoji12, { fps: 12, frames: 8 });
+    await page.locator("#gifFps").selectOption("24");
+    assert.match(await page.locator("#gifOutputHint").textContent(), /24 FPS · 17 帧/);
+    await page.locator("#gifConvert").click();
+    await page.locator("#gifResult").waitFor({ state: "visible" });
+    const emoji24 = await page.evaluate(async () => {
+      const item = await new Promise((resolve, reject) => new SVGA.Parser().load(document.querySelector("#gifDownload").href, resolve, reject));
+      return { fps: item.FPS, frames: item.frames };
+    });
+    assert.deepEqual(emoji24, { fps: 24, frames: 17 });
+    await page.locator("#gifUsage").selectOption("general");
     assert.equal(await page.locator("#gifFps").inputValue(), "30");
     assert.equal(await page.locator("#gifFps").isDisabled(), false);
-    console.log("PASS: emoji SVGA 2.0 / 20 FPS / 240 square, every repeat option from 1 through 30, 30 exact timeline repetitions, calculated duration and preset restoration.");
+    console.log("PASS: emoji SVGA 2.0 / selectable 12, 20 and 24 FPS / 240 square, every repeat option from 1 through 30, exact timeline repetitions, calculated duration, PNG cover and preset restoration.");
 
     // Optional local regression assets stay outside the public repository.
     if (process.env.EDGE_ORIGINAL_SVGA && process.env.EDGE_FIXED_SVGA) {
@@ -237,6 +283,7 @@ async function main() {
     console.log("PASS: aspect-preserving resize, encoded PNG dimensions and single-frame GIF.");
 
     await page.locator("#gifUsage").selectOption("emoji");
+    await page.locator("#gifFps").selectOption("20");
     await page.locator("#gifConvert").click();
     await page.locator("#gifResult").waitFor({ state: "visible" });
     const letterbox = await page.evaluate(async () => {

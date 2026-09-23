@@ -1,7 +1,7 @@
 import { mountBackgroundTool } from "./background-remove.js";
 
 const workerURL = new URL("./gif-worker.js", document.currentScript.src);
-workerURL.search = "v=repeat-30";
+workerURL.search = "v=fps-cover-1";
 let cleanup = () => {};
 
 function render() {
@@ -65,23 +65,23 @@ function render() {
         <div class="tool-settings">
           <h3>2. 设置与转换</h3>
           <label class="form-label" for="gifUsage">用途类型<select id="gifUsage"><option value="emoji">表情包</option><option value="general">通用素材</option></select></label>
-          <div id="gifEmojiPreset"><p class="tool-output-hint">表情包标准：SVGA 2.0 · 240 × 240 px · 20 FPS</p><p class="tool-hint">保持原 GIF 的播放节奏，帧数和时长根据重复次数计算。等比居中、透明补边，不裁切、不放大小尺寸素材。</p></div>
+          <div id="gifEmojiPreset"><p id="gifEmojiPresetText" class="tool-output-hint">表情包标准：SVGA 2.0 · 240 × 240 px · 20 FPS</p><p class="tool-hint">保持原 GIF 的播放节奏，帧数和时长根据重复次数计算。等比居中、透明补边，不裁切、不放大小尺寸素材。</p></div>
           <div id="gifGeneralOptions" hidden>
           <label class="form-label" for="gifSize">输出尺寸<select id="gifSize"><option value="720">最长边 720 px（推荐）</option><option value="480">最长边 480 px</option><option value="240">最长边 240 px</option><option value="0">保持原始尺寸</option></select></label>
           <p class="tool-hint">保持比例，不放大小尺寸图片。</p>
-          <label class="form-label" for="gifFps">输出帧率<select id="gifFps"><option value="30">30 FPS（推荐）</option><option value="60">60 FPS</option><option value="20">20 FPS</option><option value="15">15 FPS</option></select></label>
-          <p class="tool-hint">按原动画时长匹配播放节奏，时间精度受帧率影响；极短帧可能合并。</p>
           </div>
+          <label class="form-label" for="gifFps">输出帧率<select id="gifFps"><option value="12">12 FPS</option><option value="15">15 FPS</option><option value="20" selected>20 FPS（表情包默认）</option><option value="24">24 FPS</option><option value="30">30 FPS（通用素材推荐）</option><option value="60">60 FPS</option></select></label>
+          <p class="tool-hint">按原动画时长匹配播放节奏，可选 12、20、24 FPS；时间精度受帧率影响。</p>
           <label class="form-label" for="gifRepeat">重复播放次数<select id="gifRepeat"><option value="1">1 次（保持原时长）</option>${Array.from({ length: 29 }, (_, index) => `<option value="${index + 2}">${index + 2} 次</option>`).join("")}</select></label>
           <p class="tool-hint">导出时会连续复制完整动画。例如原时长 0.25 秒，选择 4 次后输出约 1.00 秒。</p>
           <label class="form-label" for="gifEdgeMode">透明边缘处理<select id="gifEdgeMode"><option value="none">保留原始边缘</option><option value="soft">柔化锯齿</option><option value="white">去白边并柔化</option></select></label>
           <p class="tool-hint">有碎白边时选「去白边并柔化」，会收缩残留边缘并重新生成平滑的半透明轮廓。</p>
           <div id="gifEdgeTrimBox" hidden><label class="form-label" for="gifEdgeTrim">去边宽度<select id="gifEdgeTrim"><option value="1">1 px · 轻度</option><option value="1.5" selected>1.5 px · 标准（推荐）</option><option value="2">2 px · 较强</option></select></label><p class="tool-hint">以最终输出像素为准。轮廓会略微收缩，仍有残边可选 2 px；细小素材建议先用 1 px。</p></div>
           <p id="gifOutputHint" class="tool-output-hint">选择 GIF 后可查看预计输出信息。</p>
-          <div class="tool-actions"><button id="gifConvert" class="btn primary" type="button" disabled>开始转换</button><button id="gifCancel" class="btn secondary" type="button" hidden>取消处理</button></div>
+          <div class="tool-actions"><button id="gifConvert" class="btn primary" type="button" disabled>开始转换</button><button id="gifCoverDownload" class="btn secondary" type="button" disabled>下载封面 72 × 72</button><button id="gifCancel" class="btn secondary" type="button" hidden>取消处理</button></div>
           <div id="gifProgressBox" class="tool-progress-box" hidden><progress id="gifProgress" max="100" value="0" aria-label="转换进度"></progress></div>
           <p id="gifStatus" class="tool-status" role="status" aria-live="polite">请先选择 GIF 文件。</p>
-          <div id="gifResult" class="tool-result" hidden><strong>转换完成</strong><p id="gifResultInfo"></p><p id="gifEdgeNotice"></p><label class="tool-preview-control">结果抽帧预览<select id="gifResultFrame"></select></label><div class="tool-preview tool-result-preview"><img id="gifResultPreview" alt="转换后 SVGA 的实际帧画面" /></div><p class="tool-hint">预览为导出文件中的实际帧；下载文件保留完整动画。</p><a id="gifDownload" class="btn primary">下载 SVGA</a></div>
+          <div id="gifResult" class="tool-result" hidden><strong>转换完成</strong><p id="gifResultInfo"></p><p id="gifEdgeNotice"></p><label class="tool-preview-control">结果抽帧预览<select id="gifResultFrame"></select></label><div class="tool-preview tool-result-preview"><img id="gifResultPreview" alt="转换后 SVGA 的实际帧画面" /></div><p class="tool-hint">预览为导出文件中的实际帧；封面取实际导出的第 1 帧，以 72 × 72 透明 PNG 导出。</p><a id="gifDownload" class="btn primary">下载 SVGA</a></div>
         </div>
       </div>
       <div class="tool-notes"><strong>使用说明</strong><p>文件仅在当前浏览器中处理，不上传服务器。离开工具箱或退出登录会清除本次文件；转换完成后请下载保存。</p><p>输出为 SVGA 2.0 逐帧位图动画，不会自动转为矢量，文件可能增大。这里的重复次数会直接写入动画时间轴；播放器仍可对整个 SVGA 再设置循环播放。</p></div>
@@ -145,6 +145,7 @@ function mount(root) {
   let metadata = null;
   let previewURL = null;
   let downloadURL = null;
+  let coverURL = null;
   let resultPreviewURLs = [];
   let worker = null;
   let timer = null;
@@ -152,6 +153,8 @@ function mount(root) {
   let disposed = false;
   let busy = false;
   let converterOpen = false;
+  let activeUsage = "emoji";
+  const fpsByUsage = { emoji: "20", general: "30" };
   const disposeBackground = mountBackgroundTool(root, on);
   root.dataset.previewBackground = "black";
   const formatSize = (bytes) => bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 / 1024).toFixed(2)} MB`;
@@ -168,7 +171,7 @@ function mount(root) {
   function setBusy(value) {
     busy = value;
     ["gifUsage", "gifSize", "gifFps", "gifRepeat", "gifEdgeMode", "gifEdgeTrim", "gifReplace", "gifFile", "gifDrop"].forEach((id) => { $(id).disabled = value; });
-    if ($("gifUsage").value === "emoji") { $("gifSize").disabled = true; $("gifFps").disabled = true; }
+    if ($("gifUsage").value === "emoji") $("gifSize").disabled = true;
     $("gifConvert").disabled = value || !metadata;
     $("gifCancel").hidden = !value;
     $("gifProgressBox").hidden = !value;
@@ -180,11 +183,16 @@ function mount(root) {
     $("gifResultPreview").removeAttribute("src");
     $("gifResultFrame").replaceChildren();
     if (downloadURL) URL.revokeObjectURL(downloadURL);
+    if (coverURL) URL.revokeObjectURL(coverURL);
     downloadURL = null;
+    coverURL = null;
     $("gifDownload").removeAttribute("href");
+    $("gifCoverDownload").disabled = true;
     $("gifResult").hidden = true;
   }
   function updateOutputHint() {
+    const fps = Number($("gifFps").value);
+    $("gifEmojiPresetText").textContent = `表情包标准：SVGA 2.0 · 240 × 240 px · ${fps} FPS`;
     if (!metadata) {
       $("gifOutputHint").textContent = "选择 GIF 后可查看预计输出信息。";
       return;
@@ -194,7 +202,6 @@ function mount(root) {
     const scale = emoji ? Math.min(1, edge / Math.max(metadata.width, metadata.height)) : edge ? Math.min(1, edge / Math.max(metadata.width, metadata.height)) : 1;
     const width = emoji ? 240 : Math.max(1, Math.round(metadata.width * scale));
     const height = emoji ? 240 : Math.max(1, Math.round(metadata.height * scale));
-    const fps = emoji ? 20 : Number($("gifFps").value);
     const repeat = Number($("gifRepeat").value);
     const cycleFrames = Math.max(1, Math.round(metadata.duration * fps / 1000));
     const frames = cycleFrames * repeat;
@@ -251,6 +258,8 @@ function mount(root) {
           downloadURL = URL.createObjectURL(blob);
           $("gifDownload").href = downloadURL;
           $("gifDownload").download = `${selectedFile.name.replace(/\.gif$/i, "") || "animation"}.svga`;
+          coverURL = URL.createObjectURL(new Blob([data.cover], { type: "image/png" }));
+          $("gifCoverDownload").disabled = false;
           const info = data.info;
           const labels = ["首帧", "中间帧", "末帧"];
           data.previews.forEach((preview, index) => {
@@ -261,7 +270,7 @@ function mount(root) {
           $("gifEdgeNotice").textContent = $("gifEdgeMode").value === "none" ? "已保留原始边缘。" : info.edgeApplied ? $("gifEdgeMode").value === "white" ? `已按 ${$("gifEdgeTrim").value} px 去边并重建透明轮廓，请切换底色检查效果。` : "已柔化透明边缘，请切换底色检查效果。" : "未检测到可处理的透明边缘，边缘优化未生效；此工具不会去除实色背景。";
           $("gifResultInfo").textContent = `${formatSize(blob.size)} · ${info.width} × ${info.height} px · ${info.frames} 帧 · ${info.fps} FPS · ${(info.duration / 1000).toFixed(2)} 秒 · 完整播放 ${info.repeat} 次`;
           $("gifResult").hidden = false;
-          status("转换成功，请下载保存 SVGA 文件。");
+          status("转换成功，可下载 SVGA 和第一帧封面。");
         }
       };
       worker.postMessage({ buffer, inspect, options: { usage: $("gifUsage").value, maxEdge: $("gifSize").value, fps: $("gifFps").value, repeat: $("gifRepeat").value, edgeMode: $("gifEdgeMode").value, edgeTrim: $("gifEdgeTrim").value } }, [buffer]);
@@ -334,7 +343,22 @@ function mount(root) {
   });
   on($("gifPreviewBackground"), "change", () => { root.dataset.previewBackground = $("gifPreviewBackground").value; });
   on($("gifResultFrame"), "change", () => { $("gifResultPreview").src = resultPreviewURLs[Number($("gifResultFrame").value)]; });
+  on($("gifCoverDownload"), "click", () => {
+    if (!coverURL || !selectedFile) return;
+    const link = document.createElement("a");
+    link.href = coverURL;
+    link.download = `${selectedFile.name.replace(/\.gif$/i, "") || "animation"}-cover-72x72.png`;
+    link.click();
+    status("已下载实际导出第 1 帧的 72 × 72 PNG 封面。");
+  });
   ["gifUsage", "gifSize", "gifFps", "gifRepeat", "gifEdgeMode", "gifEdgeTrim"].forEach((id) => on($(id), "change", () => {
+    if (id === "gifUsage") {
+      fpsByUsage[activeUsage] = $("gifFps").value;
+      activeUsage = $("gifUsage").value;
+      $("gifFps").value = fpsByUsage[activeUsage];
+    } else if (id === "gifFps") {
+      fpsByUsage[$("gifUsage").value] = $("gifFps").value;
+    }
     const emoji = $("gifUsage").value === "emoji";
     $("gifEmojiPreset").hidden = !emoji;
     $("gifGeneralOptions").hidden = emoji;
@@ -363,6 +387,7 @@ function mount(root) {
     controller.abort();
     if (previewURL) URL.revokeObjectURL(previewURL);
     if (downloadURL) URL.revokeObjectURL(downloadURL);
+    if (coverURL) URL.revokeObjectURL(coverURL);
     resultPreviewURLs.forEach((url) => URL.revokeObjectURL(url));
     resultPreviewURLs = [];
     delete root.dataset.previewBackground;

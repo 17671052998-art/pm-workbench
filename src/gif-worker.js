@@ -45,14 +45,14 @@ async function convert({ gif, frames, info }, options) {
   const usage = options.usage || "general";
   if (!["general", "emoji"].includes(usage)) fail("用途类型无效，请重新选择。");
   const emoji = usage === "emoji";
-  const fps = emoji ? 20 : Number(options.fps);
+  const fps = Number(options.fps);
   const maxEdge = emoji ? 240 : Number(options.maxEdge);
   const repeat = Number(options.repeat || 1);
   const edgeMode = options.edgeMode || "none";
   const edgeTrim = Number(options.edgeTrim || 1.5);
   if (!["none", "soft", "white"].includes(edgeMode)) fail("边缘处理参数无效，请重新选择。");
   if (![1, 1.5, 2].includes(edgeTrim)) fail("去边宽度无效，请重新选择。");
-  if (![15, 20, 30, 60].includes(fps) || ![0, 240, 480, 720].includes(maxEdge)) fail("转换参数无效，请重新选择。");
+  if (![12, 15, 20, 24, 30, 60].includes(fps) || ![0, 240, 480, 720].includes(maxEdge)) fail("转换参数无效，请重新选择。");
   if (!Number.isInteger(repeat) || repeat < 1 || repeat > 30) fail("重复播放次数无效，请重新选择。");
   const scale = maxEdge ? Math.min(1, maxEdge / Math.max(info.width, info.height)) : 1;
   const drawWidth = Math.max(1, Math.round(info.width * scale));
@@ -69,11 +69,15 @@ async function convert({ gif, frames, info }, options) {
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   const output = new OffscreenCanvas(width, height);
   const out = output.getContext("2d");
+  const coverCanvas = new OffscreenCanvas(72, 72);
+  const coverContext = coverCanvas.getContext("2d");
   const patch = new OffscreenCanvas(1, 1);
   const patchCtx = patch.getContext("2d");
-  if (!ctx || !out || !patchCtx) fail("浏览器无法创建画布，请刷新或更换浏览器。");
+  if (!ctx || !out || !coverContext || !patchCtx) fail("浏览器无法创建画布，请刷新或更换浏览器。");
   out.imageSmoothingEnabled = true;
   out.imageSmoothingQuality = "high";
+  coverContext.imageSmoothingEnabled = true;
+  coverContext.imageSmoothingQuality = "high";
   const movie = {
     version: "2.0",
     params: { viewBoxWidth: width, viewBoxHeight: height, fps, frames: count },
@@ -93,6 +97,7 @@ async function convert({ gif, frames, info }, options) {
   let elapsed = 0;
   let imageBytes = 0;
   let edgeApplied = false;
+  let cover;
   const previews = [0, Math.floor(count / 2), count - 1].map((frame) => ({ frame, png: null }));
   for (let i = 0; i < frames.length; i++) {
     // GIF disposal applies after the previous frame's display interval, before the next patch.
@@ -114,6 +119,14 @@ async function convert({ gif, frames, info }, options) {
         const image = out.getImageData(0, 0, width, height);
         edgeApplied = cleanEdges(image, edgeMode, edgeTrim) || edgeApplied;
         out.putImageData(image, 0, 0);
+      }
+      if (!cover) {
+        const scale = Math.min(72 / width, 72 / height);
+        const coverWidth = width * scale;
+        const coverHeight = height * scale;
+        coverContext.clearRect(0, 0, 72, 72);
+        coverContext.drawImage(output, (72 - coverWidth) / 2, (72 - coverHeight) / 2, coverWidth, coverHeight);
+        cover = new Uint8Array(await (await coverCanvas.convertToBlob({ type: "image/png" })).arrayBuffer());
       }
       const png = new Uint8Array(await (await output.convertToBlob({ type: "image/png" })).arrayBuffer());
       for (const preview of previews) {
@@ -137,7 +150,7 @@ async function convert({ gif, frames, info }, options) {
   const error = MovieEntity.verify(movie);
   if (error) fail("动画编码失败，请更换文件后重试。");
   const bytes = deflate(MovieEntity.encode(MovieEntity.create(movie)).finish());
-  self.postMessage({ type: "done", bytes, previews, info: { width, height, fps, frames: count, duration: count / fps * 1000, repeat, edgeApplied } }, [bytes.buffer]);
+  self.postMessage({ type: "done", bytes, cover, previews, info: { width, height, fps, frames: count, duration: count / fps * 1000, repeat, edgeApplied } }, [bytes.buffer, cover.buffer]);
 }
 
 self.onmessage = async ({ data }) => {
