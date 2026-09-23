@@ -129,6 +129,7 @@ function render() {
             <div class="bg-edit-actions"><button id="bgUndo" class="btn secondary" type="button" disabled>撤销</button><button id="bgReset" class="btn secondary" type="button" disabled>恢复原图</button></div></div>
             <div class="bg-edit-actions"><button id="bgReplace" class="btn secondary" type="button">更换文件</button></div>
             <button id="bgDownload" class="btn primary bg-download" type="button" disabled>下载透明 PNG</button>
+            <button id="bgDownloadCover" class="btn secondary bg-download" type="button" disabled hidden>下载封面 PNG（72 × 72）</button>
           </div>
         </div>
       </div>

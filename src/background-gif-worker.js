@@ -118,6 +118,24 @@ function normalizeTransparency(data) {
   }
 }
 
+async function makeCover(image, size = 72) {
+  const source = new OffscreenCanvas(image.width, image.height);
+  const sourceContext = source.getContext("2d");
+  const cover = new OffscreenCanvas(size, size);
+  const coverContext = cover.getContext("2d");
+  if (!sourceContext || !coverContext) fail("无法生成 GIF 封面，请使用新版 Chrome 或 Edge。");
+  sourceContext.putImageData(image, 0, 0);
+  const scale = Math.min(size / image.width, size / image.height);
+  const width = image.width * scale;
+  const height = image.height * scale;
+  coverContext.imageSmoothingEnabled = true;
+  coverContext.imageSmoothingQuality = "high";
+  coverContext.clearRect(0, 0, size, size);
+  coverContext.drawImage(source, (size - width) / 2, (size - height) / 2, width, height);
+  const blob = await cover.convertToBlob({ type: "image/png" });
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
 function loopCount(gif) {
   const extension = gif.frames.find((frame) => frame.application?.id?.startsWith("NETSCAPE"))?.application;
   const blocks = extension?.blocks;
@@ -157,6 +175,7 @@ async function processGif(buffer, tolerance, boundaryMode) {
   let previous;
   let restore;
   let removedPixels = 0;
+  let coverBytes;
   for (let index = 0; index < frames.length; index++) {
     if (previous?.disposalType === 2) clearArea(previous.dims, previous.transparentIndex !== undefined);
     if (previous?.disposalType === 3 && restore) context.putImageData(restore, 0, 0);
@@ -169,6 +188,7 @@ async function processGif(buffer, tolerance, boundaryMode) {
     const image = context.getImageData(0, 0, width, height);
     removedPixels += removeConnectedBackground(image, tolerance, boundaryMode);
     normalizeTransparency(image.data);
+    if (index === 0) coverBytes = await makeCover(image);
     const palette = quantize(image.data, 256, { format: "rgba4444", oneBitAlpha: 127, clearAlpha: true });
     const indexed = applyPalette(image.data, palette, "rgba4444");
     const transparentIndex = palette.findIndex((color) => color[3] === 0);
@@ -186,7 +206,7 @@ async function processGif(buffer, tolerance, boundaryMode) {
   encoder.finish();
   const output = encoder.bytes();
   if (output.byteLength > 100 * 1024 * 1024) fail("导出的 GIF 超过 100 MB，请先缩小尺寸或减少帧数。");
-  self.postMessage({ type: "done", bytes: output, info: { width, height, frames: frames.length, duration, repeat, removedPixels } }, [output.buffer]);
+  self.postMessage({ type: "done", bytes: output, coverBytes, info: { width, height, frames: frames.length, duration, repeat, removedPixels } }, [output.buffer, coverBytes.buffer]);
 }
 
 self.onmessage = async ({ data }) => {

@@ -1,7 +1,7 @@
 import { parseBackgroundIntent } from "./background-intent.js";
 
 const backgroundGifWorkerURL = new URL("./background-gif-worker.js", document.currentScript.src);
-backgroundGifWorkerURL.search = "v=background-gif-2";
+backgroundGifWorkerURL.search = "v=background-gif-3";
 const MAX_EDGE = 2048;
 const MAX_BYTES = 20 * 1024 * 1024;
 
@@ -224,6 +224,7 @@ export function mountBackgroundTool(root, on) {
   let points = [];
   let lastPoint = null;
   let downloadURL = null;
+  let coverURL = null;
   let revision = 0;
   let disposed = false;
   let renderPending = false;
@@ -260,12 +261,14 @@ export function mountBackgroundTool(root, on) {
       $("bgUndo").disabled = true;
       $("bgReset").disabled = true;
       $("bgDownload").disabled = !downloadURL || gifBusy;
+      $("bgDownloadCover").disabled = !coverURL || gifBusy;
       $("bgAuto").disabled = !gifFile || gifBusy;
       return;
     }
     $("bgUndo").disabled = !history.length;
     $("bgReset").disabled = !original;
     $("bgDownload").disabled = !original;
+    $("bgDownloadCover").disabled = true;
     $("bgAuto").disabled = !original;
   };
   const stopGifWorker = () => {
@@ -277,7 +280,9 @@ export function mountBackgroundTool(root, on) {
   };
   const clearDownload = () => {
     if (downloadURL) URL.revokeObjectURL(downloadURL);
+    if (coverURL) URL.revokeObjectURL(coverURL);
     downloadURL = null;
+    coverURL = null;
   };
   const setAnimatedMode = (value) => {
     animated = value;
@@ -290,6 +295,7 @@ export function mountBackgroundTool(root, on) {
     if (!value) $("bgGifPreview").removeAttribute("src");
     $("bgAuto").textContent = value ? "重新处理所有帧" : "重新自动移除背景";
     $("bgDownload").textContent = value ? "下载透明 GIF" : "下载透明 PNG";
+    $("bgDownloadCover").hidden = !value;
   };
   const applySelection = (mask, action = "remove", soften = false, backgroundColor = null, recordUndo = true, deferRender = false) => {
     const selection = soften ? softenMask(mask, edited.width, edited.height) : mask;
@@ -455,6 +461,7 @@ export function mountBackgroundTool(root, on) {
         stopGifWorker();
         const blob = new Blob([data.bytes], { type: "image/gif" });
         downloadURL = URL.createObjectURL(blob);
+        coverURL = URL.createObjectURL(new Blob([data.coverBytes], { type: "image/png" }));
         $("bgGifPreview").src = downloadURL;
         $("bgGifPreview").hidden = false;
         const { width, height, frames, duration, repeat, removedPixels } = data.info;
@@ -717,6 +724,14 @@ export function mountBackgroundTool(root, on) {
       link.click();
       status("透明 PNG 已下载。");
     }, "image/png");
+  });
+  on($("bgDownloadCover"), "click", () => {
+    if (!animated || !coverURL || !gifFile) return;
+    const link = document.createElement("a");
+    link.href = coverURL;
+    link.download = `${gifFile.name.replace(/\.gif$/i, "") || "animation"}-cover-72x72.png`;
+    link.click();
+    status("第一帧封面已以 72 × 72 透明 PNG 下载。");
   });
   updateActions();
   return () => {

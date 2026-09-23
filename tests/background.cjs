@@ -59,6 +59,7 @@ async function main() {
     await page.screenshot({ path: "/tmp/pm-workbench-tool-catalog.png", fullPage: true });
     await page.locator("#bgToolOpen").click();
     assert.equal(await page.locator("#bgWorkspace").isVisible(), true);
+    assert.equal(await page.locator("#bgDownloadCover").isVisible(), false);
     const imageBase64 = await page.evaluate(() => {
       const canvas = document.createElement("canvas");
       canvas.width = canvas.height = 100;
@@ -221,7 +222,30 @@ async function main() {
     assert.match(await page.locator("#bgFileName").textContent(), /20 × 20 px · 3 帧/);
     assert.match(await page.locator("#bgGifInfo").textContent(), /3 帧 · 0.60 秒 · 循环参数 2/);
     assert.equal(await page.locator("#bgDownload").textContent(), "下载透明 GIF");
+    assert.equal(await page.locator("#bgDownloadCover").isVisible(), true);
+    assert.equal(await page.locator("#bgDownloadCover").isDisabled(), false);
+    assert.equal(await page.locator("#bgDownloadCover").textContent(), "下载封面 PNG（72 × 72）");
     assert.match(await page.locator("#bgGifPreview").getAttribute("src"), /^blob:/);
+    const coverDownloadEvent = page.waitForEvent("download");
+    await page.locator("#bgDownloadCover").click();
+    const coverDownload = await coverDownloadEvent;
+    assert.equal(coverDownload.suggestedFilename(), "sequence-cover-72x72.png");
+    const coverBytes = await fs.readFile(await coverDownload.path());
+    assert.equal(coverBytes.subarray(1, 4).toString("ascii"), "PNG");
+    assert.equal(coverBytes.readUInt32BE(16), 72);
+    assert.equal(coverBytes.readUInt32BE(20), 72);
+    const coverInfo = await page.evaluate(async (base64) => {
+      const image = new Image();
+      image.src = `data:image/png;base64,${base64}`;
+      await image.decode();
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = 72;
+      const context = canvas.getContext("2d");
+      context.drawImage(image, 0, 0);
+      const alpha = (x, y) => context.getImageData(x, y, 1, 1).data[3];
+      return { width: image.width, height: image.height, corner: alpha(2, 2), subject: alpha(19, 29), whiteForeground: alpha(61, 29) };
+    }, coverBytes.toString("base64"));
+    assert.deepEqual(coverInfo, { width: 72, height: 72, corner: 0, subject: 255, whiteForeground: 255 });
     const gifDownloadEvent = page.waitForEvent("download");
     await page.locator("#bgDownload").click();
     const gifDownload = await gifDownloadEvent;
@@ -247,6 +271,7 @@ async function main() {
     await page.screenshot({ path: "/tmp/pm-workbench-background-gif.png", fullPage: true });
     await page.locator("#bgTolerance").fill("28");
     assert.equal(await page.locator("#bgDownload").isDisabled(), true);
+    assert.equal(await page.locator("#bgDownloadCover").isDisabled(), true);
     assert.match(await page.locator("#bgStatus").textContent(), /重新处理所有帧/);
     await page.locator("#bgAuto").click();
     await page.waitForFunction(() => document.querySelector("#bgStatus").textContent.includes("全部帧处理完成"));
