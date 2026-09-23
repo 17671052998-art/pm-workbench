@@ -112,7 +112,7 @@ function render() {
               <div id="bgIntentPlan" class="bg-intent-plan" hidden><strong>执行计划</strong><ol id="bgIntentSteps"></ol><p id="bgIntentWarning" hidden></p><button id="bgExecuteIntent" class="btn primary" type="button">按计划执行</button></div>
             </section>
             <label class="form-label" for="bgBoundaryMode">主体保护<select id="bgBoundaryMode"><option value="protect" selected>边缘主体保护（推荐）</option><option value="standard">普通边缘连通</option></select></label>
-            <p class="tool-hint">主体伸到图片边缘时，可保护被深色轮廓包住的白色手臂、衣服等浅色区域。</p>
+            <p class="tool-hint">主体伸到图片边缘时，可保护白色手臂、衣服等浅色区域；GIF 会自动补偿个别帧中的短轮廓断口。</p>
             <label class="form-label" for="bgTolerance">颜色容差 <strong id="bgToleranceValue">22</strong><input id="bgTolerance" class="bg-range" type="range" min="0" max="100" value="22" /></label>
             <p class="tool-hint">数值越高，选中的近似颜色越多；过高可能误删主体。</p>
             <button id="bgAuto" class="btn secondary bg-auto-btn" type="button" disabled>重新自动移除背景</button>

@@ -38,6 +38,40 @@ function dominantBorderColor(image) {
   return top ? [top.red / top.count, top.green / top.count, top.blue / top.count] : null;
 }
 
+function contourGapBarrier(image, color, limit) {
+  const { width, height, data } = image;
+  const barrier = new Uint8Array(width * height);
+  const radius = Math.max(2, Math.min(6, Math.round(Math.min(width, height) * 0.03)));
+  const maxGap = radius * 2;
+  const states = new Uint8Array(width * height);
+  for (let index = 0; index < states.length; index++) {
+    if (data[index * 4 + 3] < 16) continue;
+    states[index] = colorDistance(data, index, color) <= limit ? 1 : 2;
+  }
+  const scan = (startX, startY, dx, dy) => {
+    let bounded = false;
+    let run = [];
+    for (let x = startX, y = startY; x >= 0 && x < width && y >= 0 && y < height; x += dx, y += dy) {
+      const index = y * width + x;
+      if (states[index] === 2) {
+        if (bounded && run.length && run.length <= maxGap) for (const candidate of run) barrier[candidate] = 1;
+        bounded = true;
+        run = [];
+      } else if (states[index] === 1 && bounded) {
+        if (run.length <= maxGap) run.push(index);
+      } else {
+        bounded = false;
+        run = [];
+      }
+    }
+  };
+  for (let y = 0; y < height; y++) scan(0, y, 1, 0);
+  for (let x = 0; x < width; x++) scan(x, 0, 0, 1);
+  for (let x = 0; x < width; x++) { scan(x, 0, 1, 1); scan(x, 0, -1, 1); }
+  for (let y = 1; y < height; y++) { scan(0, y, 1, 1); scan(width - 1, y, -1, 1); }
+  return barrier;
+}
+
 function removeConnectedBackground(image, tolerance, boundaryMode) {
   const { width, height, data } = image;
   const color = dominantBorderColor(image);
@@ -49,14 +83,15 @@ function removeConnectedBackground(image, tolerance, boundaryMode) {
   const limit = (12 + tolerance * 2) ** 2;
   let front = 0;
   let back = 0;
+  const protectedBoundary = boundaryMode === "protect" && width > 2 && height > 2;
+  const barrier = protectedBoundary ? contourGapBarrier(image, color, limit) : null;
   const push = (index) => {
     if (seen[index]) return;
     seen[index] = 1;
-    if (data[index * 4 + 3] < 16 || colorDistance(data, index, color) > limit) return;
+    if (barrier?.[index] || data[index * 4 + 3] < 16 || colorDistance(data, index, color) > limit) return;
     background[index] = 1;
     queue[back++] = index;
   };
-  const protectedBoundary = boundaryMode === "protect" && width > 2 && height > 2;
   if (protectedBoundary) {
     push(width + 1);
     push(width + width - 2);

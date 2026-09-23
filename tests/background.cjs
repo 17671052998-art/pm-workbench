@@ -9,17 +9,18 @@ const { parseGIF, decompressFrame } = require("gifuct-js");
 function animatedFixture() {
   const encoder = GIFEncoder();
   const palette = [[255, 255, 255], [225, 30, 65], [30, 90, 220], [55, 25, 25]];
-  const makeFrame = (left, color) => {
+  const makeFrame = (left, color, contourGaps = []) => {
     const pixels = new Uint8Array(20 * 20);
     for (let y = 6; y < 14; y++) for (let x = left; x < left + 6; x++) pixels[y * 20 + x] = color;
     // White foreground exits through the crop but remains enclosed by a dark contour inside it.
     for (let x = 13; x < 20; x++) { pixels[6 * 20 + x] = 3; pixels[11 * 20 + x] = 3; }
     for (let y = 6; y <= 11; y++) pixels[y * 20 + 13] = 3;
+    for (const y of contourGaps) pixels[y * 20 + 13] = 0;
     return pixels;
   };
   encoder.writeFrame(makeFrame(3, 1), 20, 20, { palette, delay: 100, repeat: 2 });
-  encoder.writeFrame(makeFrame(7, 2), 20, 20, { palette, delay: 200 });
-  encoder.writeFrame(makeFrame(11, 1), 20, 20, { palette, delay: 300 });
+  encoder.writeFrame(makeFrame(7, 2, [8]), 20, 20, { palette, delay: 200 });
+  encoder.writeFrame(makeFrame(11, 1, [8, 9]), 20, 20, { palette, delay: 300 });
   encoder.finish();
   return Buffer.from(encoder.bytes());
 }
