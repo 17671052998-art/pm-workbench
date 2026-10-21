@@ -53,6 +53,7 @@ async function main() {
   console.log("PASS: legacy copying-array compatibility preserves source arrays, ordering, sparse values, property access and native methods.");
 
   const { readDesign, convertDesign } = await import("../src/design/convert.mjs");
+  await require("./design-fidelity.cjs")();
   const { nodePath, unpack, createReport, transformProps, xdMatrix } = await import("../src/design/common.mjs");
   const source = fixture();
   const parsed = await readDesign(source, "fixture.sketch");
@@ -156,6 +157,7 @@ async function main() {
     await page.locator("#designFile").setInputFiles({ name: "sample.sketch", mimeType: "application/octet-stream", buffer: Buffer.from(source) });
     await page.waitForFunction(() => !document.querySelector("#designConvert").disabled);
     assert.match(await page.locator("#designSourceInfo").textContent(), /6 个图层 · 1 张图片/);
+    assert.equal(await page.locator("#designStrict").isChecked(), true);
     for (const target of ["fig", "xd"]) {
       await page.locator("#designTarget").selectOption(target);
       await page.locator("#designConvert").click();
@@ -175,6 +177,28 @@ async function main() {
     await page.locator("#designFile").setInputFiles({ name: "again.fig", mimeType: "application/octet-stream", buffer: Buffer.from(native.fig) });
     await page.waitForFunction(() => !document.querySelector("#designConvert").disabled);
     await page.locator("#designTarget").selectOption("sketch");
+    await page.locator("#designConvert").click();
+    await page.locator("#designResult").waitFor({ state: "visible" });
+    const maskEntries = unzipSync(source);
+    const maskPage = JSON.parse(strFromU8(maskEntries["pages/page.json"]));
+    maskPage.layers[0].layers[0].layers[0].hasClippingMask = true;
+    maskEntries["pages/page.json"] = strToU8(JSON.stringify(maskPage));
+    const maskSource = zipSync(maskEntries);
+    await page.locator("#designFile").setInputFiles({ name: "mask.sketch", mimeType: "application/octet-stream", buffer: Buffer.from(maskSource) });
+    await page.waitForFunction(() => !document.querySelector("#designConvert").disabled);
+    await page.locator("#designTarget").selectOption("xd");
+    await page.locator("#designConvert").click();
+    await page.waitForFunction(() => document.querySelector("#designStatus").classList.contains("is-error"));
+    assert.match(await page.locator("#designIssues").textContent(), /蒙版/);
+    assert.equal(await page.locator("#designResult").isVisible(), false);
+    assert.equal(await page.locator("#designConvert").isDisabled(), false);
+    await page.locator("#designStrict").uncheck();
+    await page.locator("#designConvert").click();
+    await page.locator("#designResult").waitFor({ state: "visible" });
+    assert.match(await page.locator("#designStatus").textContent(), /兼容模式/);
+    await page.locator("#designStrict").check();
+    assert.equal(await page.locator("#designResult").isVisible(), false);
+    await page.locator("#designTarget").selectOption("fig");
     await page.locator("#designConvert").click();
     await page.locator("#designResult").waitFor({ state: "visible" });
     const largeFilename = path.join(largeDirectory, "large.sketch");

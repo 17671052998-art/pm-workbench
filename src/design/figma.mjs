@@ -2,7 +2,7 @@ import { deflateSync } from "fflate";
 import { materializeFigArchive, parseFigBuffer, writeFigArchive } from "@open-pencil/fig";
 import { sceneNodeToKiwi, makeDocumentNodeChange, makeCanvasNodeChange, nameImagesForFigma, figImageEntries } from "@open-pencil/fig/node-change";
 import { initCodec, encodeMessage, getSchemaBytes } from "@open-pencil/kiwi/fig/codec";
-import { EMPTY_PNG, MAX_NODES, unpack, xdMatrix } from "./common.mjs";
+import { EMPTY_PNG, MAX_NODES, unpack, xdMatrix, reportMissingLayers } from "./common.mjs";
 
 export async function readFigma(bytes, report) {
   if (bytes[0] === 0x50 && bytes[1] === 0x4b) unpack(bytes);
@@ -10,6 +10,7 @@ export async function readFigma(bytes, report) {
   const parsed = parseFigBuffer(buffer);
   if (parsed.nodeChanges.length > MAX_NODES) throw new Error("图层超过 50,000 个，请拆分 Figma 文件。");
   const { graph } = materializeFigArchive(buffer, {
+    pageIds: new Set(parsed.nodeChanges.filter((node) => node.type === "CANVAS" && node.guid).map((node) => `${node.guid.sessionID}:${node.guid.localID}`)),
     onUnsupportedResource: () => report.add("fig-resource", "部分 Figma 专属资源没有对应的目标格式。"),
     onUnsupportedVariableExpression: () => report.add("variable", "变量表达式按当前外观转换。"),
     onUnresolvedBinding: () => report.add("binding", "未能解析的变量绑定按保存值转换。"),
@@ -20,7 +21,7 @@ export async function readFigma(bytes, report) {
   return { graph, thumbnail: parsed.thumbnailPNG || EMPTY_PNG };
 }
 
-export async function writeFigma(graph, name, thumbnail = EMPTY_PNG) {
+export async function writeFigma(graph, name, thumbnail = EMPTY_PNG, report) {
   await initCodec();
   const ids = new Map([[graph.rootId, { sessionID: 0, localID: 0 }]]);
   let index = 1;
@@ -29,21 +30,24 @@ export async function writeFigma(graph, name, thumbnail = EMPTY_PNG) {
   const changes = [makeDocumentNodeChange(doc, "srgb")];
   const blobs = [];
   const counter = { value: index };
-  graph.getPages().forEach((page, pageIndex) => {
+  graph.getPages(true).forEach((page, pageIndex) => {
     const pageID = ids.get(page.id);
-    changes.push(makeCanvasNodeChange(pageID, doc, String.fromCharCode(33 + pageIndex), page.name));
+    changes.push({ ...makeCanvasNodeChange(pageID, doc, String.fromCharCode(33 + pageIndex), page.name), internalOnly: !!page.internalOnly });
     graph.getChildren(page.id).forEach((child, childIndex) => {
       changes.push(...sceneNodeToKiwi(child, pageID, childIndex, counter, graph, blobs, { nodeIdToGuid: ids }));
     });
   });
   const nodesByGuid = new Map([...ids].map(([id, guid]) => [`${guid.sessionID}:${guid.localID}`, graph.getNode(id)]));
+  const written = new Set();
   for (const change of changes) {
     const node = nodesByGuid.get(`${change.guid.sessionID}:${change.guid.localID}`);
     if (!node || node.id === graph.rootId || node.type === "CANVAS") continue;
+    written.add(node.id);
     const t = xdMatrix(node);
     change.transform = { m00: t.a, m01: t.c, m02: t.tx, m10: t.b, m11: t.d, m12: t.ty };
     if (change.fontName && node.fontPostscript) change.fontName.postscript = node.fontPostscript;
   }
+  if (report) reportMissingLayers(graph, written, report);
   const imageNames = nameImagesForFigma(changes, graph.images);
   const kiwiData = encodeMessage({ type: "NODE_CHANGES", sessionID: 0, ackID: 0, nodeChanges: changes, blobs: blobs.map((bytes) => ({ bytes })) });
   const view = thumbnail.length > 24 ? new DataView(thumbnail.buffer, thumbnail.byteOffset, thumbnail.byteLength) : null;

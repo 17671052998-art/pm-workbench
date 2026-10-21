@@ -12,10 +12,10 @@ self.onmessage = async ({ data }) => {
     } else if (data.type === "convert") {
       if (!parsed) throw new Error("请先选择设计文件。");
       self.postMessage({ type: "progress", message: "正在映射图层并生成目标设计文件…" });
-      const result = await convertDesign(parsed, data.target);
+      const result = await convertDesign(parsed, data.target, { strict: data.strict !== false });
       self.postMessage({ type: "done", ...result }, [result.bytes.buffer]);
     }
   } catch (error) {
-    self.postMessage({ type: "error", message: error.message || "转换失败，请检查文件是否损坏或版本是否受支持。" });
+    self.postMessage({ type: "error", code: error.code, issues: error.issues, message: error.message || "转换失败，请检查文件是否损坏或版本是否受支持。" });
   }
 };

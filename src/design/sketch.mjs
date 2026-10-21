@@ -1,10 +1,14 @@
 import { zipSync } from "fflate";
 import { linearGradientTransform, ellipticalGradientTransform, gradientPoint } from "@open-pencil/scene-graph/gradient";
-import { createGraph, addNode, addImage, jsonEntry, unpack, point, finite, color, solid, fontWeight, fontStyle, uid, encoder, imageType, vectorProps, nodePath, normalizePath } from "./common.mjs";
+import { createGraph, addNode, addImage, jsonEntry, unpack, point, finite, color, solid, fontWeight, fontStyle, uid, encoder, imageType, vectorProps, nodePath, normalizePath, reportMissingLayers } from "./common.mjs";
 
 const readColor = (c = {}) => color(c.red, c.green, c.blue, c.alpha ?? 1);
 const writeColor = (c) => ({ _class: "color", red: c.r, green: c.g, blue: c.b, alpha: c.a });
 const pair = (p) => `{${p[0]}, ${p[1]}}`;
+const blendModes = ["NORMAL", "DARKEN", "MULTIPLY", "COLOR_BURN", "LIGHTEN", "SCREEN", "COLOR_DODGE", "OVERLAY", "SOFT_LIGHT", "HARD_LIGHT", "DIFFERENCE", "EXCLUSION", "HUE", "SATURATION", "COLOR", "LUMINOSITY", "PLUS_DARKER", "PLUS_LIGHTER"];
+const readBlend = (value) => blendModes[value] || "NORMAL";
+const writeBlend = (value) => Math.max(0, blendModes.indexOf(value));
+const booleanOperations = ["UNION", "SUBTRACT", "INTERSECT", "EXCLUDE"];
 
 function sketchPath(raw, width, height) {
   const pts = (raw.points || []).map((p) => ({ ...p, p: point(p.point).map((n, i) => n * (i ? height : width)), from: point(p.curveFrom).map((n, i) => n * (i ? height : width)), to: point(p.curveTo).map((n, i) => n * (i ? height : width)) }));
@@ -31,6 +35,7 @@ export async function readSketch(bytes, report) {
   (doc.foreignSymbols || []).forEach((s) => s.symbolMaster && collect(s.symbolMaster));
   function paint(p, w, h, name) {
     let fill = solid(readColor(p.color), p.contextSettings?.opacity ?? 1);
+    fill.blendMode = readBlend(p.contextSettings?.blendMode);
     fill.visible = p.isEnabled !== false;
     if (p.fillType === 1) {
       const g = p.gradient || {}, from = point(g.from, [0, 0.5]), to = point(g.to, [1, 0.5]);
@@ -46,9 +51,12 @@ export async function readSketch(bytes, report) {
     const s = raw.style || {};
     const fills = (s.fills || []).map((f) => paint(f, w, h, raw.name));
     const strokes = (s.borders || []).map((f) => ({ ...paint(f, w, h, raw.name), weight: finite(f.thickness, 1), align: ["CENTER", "INSIDE", "OUTSIDE"][f.position] || "CENTER" }));
-    const effects = [...(s.shadows || []).map((e) => ({ ...e, kind: "DROP_SHADOW" })), ...(s.innerShadows || []).map((e) => ({ ...e, kind: "INNER_SHADOW" }))].map((e) => ({ type: e.kind, color: readColor(e.color), radius: finite(e.blurRadius), spread: finite(e.spread), offset: { x: finite(e.offsetX), y: finite(e.offsetY) }, visible: e.isEnabled !== false }));
-    if (s.blur?.isEnabled) effects.push({ type: s.blur.type === 3 ? "BACKGROUND_BLUR" : "LAYER_BLUR", color: color(), radius: finite(s.blur.radius), spread: 0, offset: { x: 0, y: 0 }, visible: true });
-    return { fills, strokes, effects, opacity: s.contextSettings?.opacity ?? 1, dashPattern: s.borderOptions?.dashPattern || [], strokeCap: ["NONE", "ROUND", "SQUARE"][s.borderOptions?.lineCapStyle] || "NONE", strokeJoin: ["MITER", "ROUND", "BEVEL"][s.borderOptions?.lineJoinStyle] || "MITER" };
+    const effects = [...(s.shadows || []).map((e) => ({ ...e, kind: "DROP_SHADOW" })), ...(s.innerShadows || []).map((e) => ({ ...e, kind: "INNER_SHADOW" }))].map((e) => ({ type: e.kind, color: readColor({ ...e.color, alpha: (e.color?.alpha ?? 1) * (e.contextSettings?.opacity ?? 1) }), radius: finite(e.blurRadius), spread: finite(e.spread), offset: { x: finite(e.offsetX), y: finite(e.offsetY) }, visible: e.isEnabled !== false, blendMode: readBlend(e.contextSettings?.blendMode) }));
+    if (s.blur) {
+      effects.push({ type: s.blur.type === 3 ? "BACKGROUND_BLUR" : "LAYER_BLUR", color: color(), radius: finite(s.blur.radius), spread: 0, offset: { x: 0, y: 0 }, visible: s.blur.isEnabled !== false });
+      if (![0, 3].includes(s.blur.type ?? 0)) report.add("sketch-blur", "运动或缩放模糊目前只能按普通模糊转换。", raw.name);
+    }
+    return { fills, strokes, effects, opacity: s.contextSettings?.opacity ?? 1, blendMode: readBlend(s.contextSettings?.blendMode), dashPattern: s.borderOptions?.dashPattern || [], strokeCap: ["NONE", "ROUND", "SQUARE"][s.borderOptions?.lineCapStyle] || "NONE", strokeJoin: ["MITER", "ROUND", "BEVEL"][s.borderOptions?.lineJoinStyle] || "MITER" };
   }
   function textStyle(attrs = {}) {
     const font = attrs.MSAttributedStringFontAttribute?.attributes || {};
@@ -59,16 +67,25 @@ export async function readSketch(bytes, report) {
   }
   function readNode(raw, parent, depth = 0, sx = 1, sy = 1, chain = []) {
     if (depth > 128) throw new Error("图层嵌套过深。");
-    if (raw._class === "slice") return;
+    if (raw._class === "slice") report.add("sketch-slice", "切片区域保留为无填充画框，切片导出设置不保留。", raw.name);
     const f = raw.frame || {};
     const w = finite(f.width) * sx, h = finite(f.height) * sy;
-    let type = ({ page: "CANVAS", artboard: "FRAME", symbolMaster: "FRAME", group: "GROUP", shapeGroup: "GROUP", rectangle: "RECTANGLE", oval: "ELLIPSE", text: "TEXT", bitmap: "RECTANGLE", shapePath: "VECTOR", triangle: "VECTOR", star: "VECTOR", polygon: "VECTOR", symbolInstance: "GROUP" })[raw._class];
+    let type = ({ page: "CANVAS", artboard: "FRAME", slice: "FRAME", symbolMaster: "FRAME", group: "GROUP", shapeGroup: "GROUP", rectangle: "RECTANGLE", oval: "ELLIPSE", text: "TEXT", bitmap: "RECTANGLE", shapePath: "VECTOR", triangle: "VECTOR", star: "VECTOR", polygon: "VECTOR", symbolInstance: "GROUP" })[raw._class];
     if (!type) { type = raw.layers ? "GROUP" : "RECTANGLE"; report.add("sketch-node", "部分 Sketch 图层按基础图形或分组转换。", raw.name); }
     const props = { name: raw.name || raw._class, x: finite(f.x) * sx, y: finite(f.y) * sy, width: w, height: h, rotation: -finite(raw.rotation), flipX: !!raw.isFlippedHorizontal, flipY: !!raw.isFlippedVertical, visible: raw.isVisible !== false, locked: !!raw.isLocked, isMask: !!raw.hasClippingMask, clipsContent: raw._class === "artboard", ...style(raw, w, h) };
+    if (raw._class === "shapeGroup") {
+      const operations = [...new Set((raw.layers || []).slice(1).map((child) => child.booleanOperation).filter((operation) => operation >= 0))];
+      if (operations.length === 1) { type = "BOOLEAN_OPERATION"; props.booleanOperation = booleanOperations[operations[0]]; }
+      else if (operations.length > 1) report.add("sketch-boolean-mixed", "一个形状组中混合了多种布尔运算，目前不能等价转换。", raw.name);
+    }
     if (raw._class === "group") props.fills = [];
     if (raw.hasBackgroundColor) props.fills = [solid(readColor(raw.backgroundColor))];
     if (type === "RECTANGLE") {
       props.cornerRadius = finite(raw.fixedRadius || raw.points?.[0]?.cornerRadius) * sx;
+      if (raw.points?.length === 4) {
+        const radii = raw.points.map((p) => finite(p.cornerRadius, finite(raw.fixedRadius)) * sx);
+        Object.assign(props, { independentCorners: radii.some((radius) => radius !== radii[0]), topLeftRadius: radii[0], topRightRadius: radii[1], bottomRightRadius: radii[2], bottomLeftRadius: radii[3] });
+      }
       if (raw._class === "bitmap") {
         const hash = images.get(raw.image?._ref);
         if (hash) props.fills = [{ ...solid(color(1, 1, 1)), type: "IMAGE", imageHash: hash, imageScaleMode: "FILL" }];
@@ -83,7 +100,7 @@ export async function readSketch(bytes, report) {
       const attributed = raw.attributedString || {};
       const base = raw.style?.textStyle?.encodedAttributes || attributed.attributes?.[0]?.attributes || {};
       const values = textStyle(base);
-      if (!values.fills) delete values.fills;
+      if (!values.fills || props.fills.length) delete values.fills;
       Object.assign(props, values, { text: attributed.string || "", textAutoResize: raw.textBehaviour === 0 ? "WIDTH_AND_HEIGHT" : raw.textBehaviour === 1 ? "HEIGHT" : "NONE", textAlignHorizontal: ["LEFT", "RIGHT", "CENTER", "JUSTIFIED"][base.paragraphStyle?.alignment] || "LEFT", fontPostscript: base.MSAttributedStringFontAttribute?.attributes?.name });
       props.fontSize *= sy; props.letterSpacing *= sx;
       if (props.lineHeight) props.lineHeight *= sy;
@@ -92,7 +109,7 @@ export async function readSketch(bytes, report) {
     }
     const node = addNode(graph, type, parent, props);
     if (raw._class === "symbolMaster" || raw._class === "symbolInstance") report.add("sketch-symbol", "Sketch 符号转换为可编辑图层，符号关联不保留。", raw.name);
-    if (raw._class === "shapeGroup") report.add("sketch-boolean", "Sketch 布尔组合保留为可编辑子图层，需要检查相减和相交效果。", raw.name);
+    if (raw._class === "shapeGroup" && type !== "BOOLEAN_OPERATION") report.add("sketch-shape-group", "复合路径按可编辑子路径保留，合成填充规则尚不能保证等价转换。", raw.name);
     if (raw.flow?.destinationArtboardID) report.add("prototype", "原型交互暂不参与格式转换。", raw.name);
     let children = raw.layers || [];
     let childSx = sx, childSy = sy;
@@ -156,6 +173,7 @@ function pathLayers(node, d) {
 
 export function writeSketch(graph, name, thumbnail, report) {
   const archive = {};
+  const written = new Set();
   const imageRefs = new Map();
   for (const [hash, bytes] of graph.images) {
     const path = `images/${hash}.${imageType(bytes)}`;
@@ -165,14 +183,18 @@ export function writeSketch(graph, name, thumbnail, report) {
   function paint(fill, border = false) {
     const start = fill.gradientTransform ? gradientPoint(fill.gradientTransform, { x: 0, y: 0.5 }) : { x: 0, y: 0.5 };
     const end = fill.gradientTransform ? gradientPoint(fill.gradientTransform, { x: 1, y: 0.5 }) : { x: 1, y: 0.5 };
-    return { _class: border ? "border" : "fill", isEnabled: fill.visible, fillType: fill.type === "IMAGE" ? 4 : fill.type.startsWith("GRADIENT") ? 1 : 0, color: writeColor(fill.color), contextSettings: { _class: "graphicsContextSettings", opacity: fill.opacity, blendMode: 0 }, gradient: { _class: "gradient", elipseLength: 1, from: pair([start.x, start.y]), to: pair([end.x, end.y]), gradientType: fill.type === "GRADIENT_RADIAL" ? 1 : 0, stops: (fill.gradientStops || []).map((s) => ({ _class: "gradientStop", color: writeColor(s.color), position: s.position })) }, image: imageRefs.get(fill.imageHash), patternFillType: fill.imageScaleMode === "FIT" ? 2 : fill.imageScaleMode === "TILE" ? 0 : 1, patternTileScale: 1, noiseIndex: 0, noiseIntensity: 0, ...(border ? { thickness: fill.weight, position: { CENTER: 0, INSIDE: 1, OUTSIDE: 2 }[fill.align] || 0 } : {}) };
+    return { _class: border ? "border" : "fill", isEnabled: fill.visible, fillType: fill.type === "IMAGE" ? 4 : fill.type.startsWith("GRADIENT") ? 1 : 0, color: writeColor(fill.color), contextSettings: { _class: "graphicsContextSettings", opacity: fill.opacity, blendMode: writeBlend(fill.blendMode) }, gradient: { _class: "gradient", elipseLength: 1, from: pair([start.x, start.y]), to: pair([end.x, end.y]), gradientType: fill.type === "GRADIENT_RADIAL" ? 1 : 0, stops: (fill.gradientStops || []).map((s) => ({ _class: "gradientStop", color: writeColor(s.color), position: s.position })) }, image: imageRefs.get(fill.imageHash), patternFillType: fill.imageScaleMode === "FIT" ? 2 : fill.imageScaleMode === "TILE" ? 0 : 1, patternTileScale: 1, noiseIndex: 0, noiseIntensity: 0, ...(border ? { thickness: fill.weight, position: { CENTER: 0, INSIDE: 1, OUTSIDE: 2 }[fill.align] || 0 } : {}) };
   }
   function style(node) {
-    const shadow = (e) => ({ _class: e.type === "INNER_SHADOW" ? "innerShadow" : "shadow", isEnabled: e.visible, blurRadius: e.radius, spread: e.spread, offsetX: e.offset.x, offsetY: e.offset.y, color: writeColor(e.color), contextSettings: { _class: "graphicsContextSettings", opacity: 1, blendMode: 0 } });
-    return { _class: "style", do_objectID: uid(), endMarkerType: 0, startMarkerType: 0, miterLimit: 10, windingRule: 1, fills: node.fills.map((f) => paint(f)), borders: node.strokes.map((f) => paint(f, true)), shadows: node.effects.filter((e) => e.type === "DROP_SHADOW").map(shadow), innerShadows: node.effects.filter((e) => e.type === "INNER_SHADOW").map(shadow), contextSettings: { _class: "graphicsContextSettings", opacity: node.opacity, blendMode: 0 }, borderOptions: { _class: "borderOptions", isEnabled: true, dashPattern: node.dashPattern, lineCapStyle: { NONE: 0, ROUND: 1, SQUARE: 2 }[node.strokeCap] || 0, lineJoinStyle: { MITER: 0, ROUND: 1, BEVEL: 2 }[node.strokeJoin] || 0 } };
+    const shadow = (e) => ({ _class: e.type === "INNER_SHADOW" ? "innerShadow" : "shadow", isEnabled: e.visible, blurRadius: e.radius, spread: e.spread, offsetX: e.offset.x, offsetY: e.offset.y, color: writeColor(e.color), contextSettings: { _class: "graphicsContextSettings", opacity: 1, blendMode: writeBlend(e.blendMode) } });
+    const value = { _class: "style", do_objectID: uid(), endMarkerType: 0, startMarkerType: 0, miterLimit: 10, windingRule: 1, fills: node.fills.map((f) => paint(f)), borders: node.strokes.map((f) => paint(f, true)), shadows: node.effects.filter((e) => e.type === "DROP_SHADOW").map(shadow), innerShadows: node.effects.filter((e) => e.type === "INNER_SHADOW").map(shadow), contextSettings: { _class: "graphicsContextSettings", opacity: node.opacity, blendMode: writeBlend(node.blendMode) }, borderOptions: { _class: "borderOptions", isEnabled: true, dashPattern: node.dashPattern, lineCapStyle: { NONE: 0, ROUND: 1, SQUARE: 2 }[node.strokeCap] || 0, lineJoinStyle: { MITER: 0, ROUND: 1, BEVEL: 2 }[node.strokeJoin] || 0 } };
+    const blur = node.effects.find((effect) => effect.type.includes("BLUR"));
+    if (blur) value.blur = { _class: "blur", isEnabled: blur.visible, type: blur.type === "BACKGROUND_BLUR" ? 3 : 0, radius: blur.radius, center: "{0.5, 0.5}", motionAngle: 0, saturation: 1 };
+    return value;
   }
   const attributes = (node) => ({ MSAttributedStringFontAttribute: { _class: "fontDescriptor", attributes: { name: node.fontPostscript || (node.fontFamily === "Arial" ? node.fontWeight >= 700 ? "Arial-BoldMT" : "ArialMT" : `${node.fontFamily.replace(/\s+/g, "")}-${fontStyle(node.fontWeight, node.italic).replace(/\s+/g, "")}`), size: node.fontSize } }, MSAttributedStringColorAttribute: writeColor(node.fills.find((f) => f.visible)?.color || color()), kerning: node.letterSpacing || 0, paragraphStyle: { _class: "paragraphStyle", alignment: { LEFT: 0, RIGHT: 1, CENTER: 2, JUSTIFIED: 3 }[node.textAlignHorizontal] || 0, ...(node.lineHeight ? { minimumLineHeight: node.lineHeight, maximumLineHeight: node.lineHeight } : {}) }, underlineStyle: node.textDecoration === "UNDERLINE" ? 1 : 0, strikethroughStyle: node.textDecoration === "STRIKETHROUGH" ? 1 : 0 });
   function layer(node) {
+    written.add(node.id);
     let type = ({ CANVAS: "page", FRAME: "artboard", RECTANGLE: "rectangle", ROUNDED_RECTANGLE: "rectangle", ELLIPSE: "oval", TEXT: "text", LINE: "shapePath", VECTOR: "shapeGroup", STAR: "shapeGroup", POLYGON: "shapeGroup", BOOLEAN_OPERATION: "group", GROUP: "group", COMPONENT: "group", INSTANCE: "group", COMPONENT_SET: "group", SECTION: "group" })[node.type] || "group";
     if (type === "artboard" && graph.getNode(node.parentId)?.type !== "CANVAS") type = "group";
     const value = { ...baseLayer(node, type), style: style(node) };
@@ -192,7 +214,11 @@ export function writeSketch(graph, name, thumbnail, report) {
       value.edited = false;
       value.pointRadiusBehaviour = 1;
     } else if (type === "oval") { value.isClosed = true; value.edited = false; }
-    else if (type === "shapePath" || type === "shapeGroup") {
+    else if (node.type === "BOOLEAN_OPERATION") {
+      value._class = "shapeGroup";
+      value.layers = graph.getChildren(node.id).map((child, index) => ({ ...layer(child), booleanOperation: index === 0 ? -1 : Math.max(0, booleanOperations.indexOf(node.booleanOperation)) }));
+      value.windingRule = 1;
+    } else if (type === "shapePath" || type === "shapeGroup") {
       const d = node.type === "LINE" ? `M0 0 L${node.width} ${node.height}` : nodePath(node);
       const paths = pathLayers(node, d);
       if (!paths.length) report.add("vector-empty", "部分矢量没有可读取的轮廓。", node.name);
@@ -200,7 +226,7 @@ export function writeSketch(graph, name, thumbnail, report) {
       value.layers = paths;
       value.windingRule = 1;
     }
-    if (["group", "artboard", "page"].includes(type)) {
+    if (["group", "artboard", "page"].includes(type) && node.type !== "BOOLEAN_OPERATION") {
       value.layers = graph.getChildren(node.id).map(layer);
       if (type === "group" && node.fills.some((f) => f.visible)) {
         value.layers.unshift(layer({ ...node, type: "RECTANGLE", name: `${node.name} 背景`, x: 0, y: 0, rotation: 0, flipX: false, flipY: false, strokes: [], effects: [], opacity: 1 }));
@@ -219,7 +245,7 @@ export function writeSketch(graph, name, thumbnail, report) {
     }
     return value;
   }
-  const pages = graph.getPages().map(layer);
+  const pages = graph.getPages(true).map(layer);
   const pageInfo = {};
   for (const page of pages) {
     archive[`pages/${page.do_objectID}.json`] = encoder(JSON.stringify(page));
@@ -230,5 +256,6 @@ export function writeSketch(graph, name, thumbnail, report) {
   archive["meta.json"] = encoder(JSON.stringify({ version: 136, compatibilityVersion: 99, app: "com.bohemiancoding.sketch3", variant: "NONAPPSTORE", appVersion: "97", build: 1, pagesAndArtboards: pageInfo, fonts: [...new Set([...graph.nodes.values()].filter((n) => n.type === "TEXT").map((n) => n.fontFamily))] }));
   archive["user.json"] = encoder("{}");
   if (thumbnail) archive["previews/preview.png"] = [thumbnail, { level: 0 }];
+  reportMissingLayers(graph, written, report);
   return zipSync(archive);
 }

@@ -48,14 +48,24 @@ export function createGraph() {
 export function createReport() {
   const issues = new Map();
   return {
-    add(code, message, name = "") {
-      const issue = issues.get(code) || { code, message, count: 0, examples: [] };
+    add(code, message, name = "", severity = "warning") {
+      const issue = issues.get(code) || { code, message, count: 0, examples: [], severity };
+      if (severity !== "info") issue.severity = severity;
       issue.count++;
       if (name && issue.examples.length < 3 && !issue.examples.includes(name)) issue.examples.push(name.slice(0, 100));
       issues.set(code, issue);
     },
     list() { return [...issues.values()]; },
   };
+}
+
+export function reportMissingLayers(graph, written, report) {
+  for (const node of graph.nodes.values()) if (node.type !== "CANVAS" && node.id !== graph.rootId && !written.has(node.id)) report.add("missing-layer", "导出器未能写入此源图层，不能作为完整结果使用。", node.name);
+}
+
+export function hasMixedTextStyles(node) {
+  const value = (key, input) => key === "fills" && input ? JSON.stringify(input.map((fill) => ({ type: fill.type, color: fill.color, opacity: fill.opacity ?? 1, visible: fill.visible ?? true, blendMode: fill.blendMode || "NORMAL" }))) : JSON.stringify(input);
+  return node.styleRuns.some((run) => Object.entries(run.style).some(([key, input]) => input !== undefined && value(key, input) !== value(key, node[key])));
 }
 
 export function addNode(graph, type, parent, props = {}) {
@@ -80,6 +90,44 @@ export function imageType(bytes) {
   if (bytes?.[0] === 0x47 && bytes[1] === 0x49) return "gif";
   if (bytes?.[8] === 0x57 && bytes[9] === 0x45) return "webp";
   return "bin";
+}
+
+export function imageDimensions(bytes) {
+  if (!bytes) return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const type = imageType(bytes);
+  let width = 0, height = 0;
+  if (type === "png" && bytes.length >= 24) { width = view.getUint32(16); height = view.getUint32(20); }
+  else if (type === "gif" && bytes.length >= 10) { width = view.getUint16(6, true); height = view.getUint16(8, true); }
+  else if (type === "jpg") {
+    // JPEG dimensions belong to a Start Of Frame segment, not a fixed byte offset.
+    let offset = 2;
+    while (offset < bytes.length) {
+      if (bytes[offset++] !== 0xff) break;
+      while (offset < bytes.length && bytes[offset] === 0xff) offset++;
+      const marker = bytes[offset++];
+      if (marker === 0xd9 || marker === 0xda) break;
+      if (marker === 0x01 || marker >= 0xd0 && marker <= 0xd8) continue;
+      if (offset + 2 > bytes.length) break;
+      const length = view.getUint16(offset);
+      if (length < 2 || offset + length > bytes.length) break;
+      if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker) && length >= 8) {
+        height = view.getUint16(offset + 3); width = view.getUint16(offset + 5); break;
+      }
+      offset += length;
+    }
+  } else if (type === "webp" && bytes.length >= 30) {
+    const chunk = decoder(bytes.subarray(12, 16));
+    if (chunk === "VP8X") { width = 1 + (view.getUint32(24, true) & 0xffffff); height = 1 + (view.getUint32(26, true) >>> 8); }
+    else if (chunk === "VP8 " && bytes[23] === 0x9d && bytes[24] === 1 && bytes[25] === 0x2a) { width = view.getUint16(26, true) & 0x3fff; height = view.getUint16(28, true) & 0x3fff; }
+    else if (chunk === "VP8L" && bytes[20] === 0x2f) { const bits = view.getUint32(21, true); width = 1 + (bits & 0x3fff); height = 1 + (bits >>> 14 & 0x3fff); }
+  }
+  return width > 0 && height > 0 ? { width, height } : null;
+}
+
+export function hasImageTransform(fill) {
+  const matrix = fill.imageTransform;
+  return matrix && Object.entries({ m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 }).some(([key, identity]) => Math.abs(finite(matrix[key], identity) - identity) > 0.000001);
 }
 
 export function normalizePath(d) {
@@ -199,14 +247,22 @@ export function targetReport(graph, target, report) {
     if (node.type === "CANVAS" || node.id === graph.rootId) continue;
     if (["COMPONENT", "COMPONENT_SET", "INSTANCE"].includes(node.type) && target !== "fig") report.add("component-expanded", "组件按当前外观展开为可编辑分组，主实例关联不保留。", node.name);
     if (node.layoutMode !== "NONE" && target !== "fig") report.add("layout-fixed", "自动布局转换为当前固定位置。", node.name);
-    if (target === "xd" && node.fills.filter((f) => f.visible).length > 1) report.add("multiple-fills", "XD 仅保留最上层可见填充。", node.name);
-    if (target === "xd" && node.strokes.filter((s) => s.visible).length > 1) report.add("multiple-strokes", "XD 仅保留最上层可见描边。", node.name);
-    for (const fill of node.fills) if (!["SOLID", "IMAGE", "GRADIENT_LINEAR", "GRADIENT_RADIAL"].includes(fill.type)) report.add("paint-approximation", "部分填充类型按基础颜色或线性渐变近似。", node.name);
-    if (node.isMask) report.add("mask", "复杂蒙版需要在目标软件中检查。", node.name);
+    for (const fill of [...node.fills, ...node.strokes]) {
+      if (target !== "fig" && !["SOLID", "IMAGE", "GRADIENT_LINEAR", "GRADIENT_RADIAL"].includes(fill.type)) report.add("paint-approximation", "目标格式尚未实现此填充类型的等价转换。", node.name);
+      if (target === "xd" && fill.type === "GRADIENT_RADIAL") report.add("xd-radial-gradient", "径向渐变尚不能等价导出到 XD。", node.name);
+      if (target !== "fig" && fill.type === "IMAGE" && (hasImageTransform(fill) || fill.imageScaleMode === "CROP")) report.add("image-crop", "图片裁剪或局部变换尚不能等价转换。", node.name);
+    }
+    if (target !== "fig" && node.isMask) report.add("mask", "蒙版行为尚不能保证等价转换。", node.name);
     if (node.clipsContent && graph.getNode(node.parentId)?.type !== "CANVAS" && target !== "fig") report.add("nested-clip", "嵌套画框的裁切范围可能发生变化，请检查溢出内容。", node.name);
-    if (node.type === "BOOLEAN_OPERATION") report.add("boolean", "布尔组合按可编辑子图层保留，相减和相交效果需要检查。", node.name);
+    if (target === "xd" && node.type === "BOOLEAN_OPERATION" && !nodePath(node)) report.add("boolean", "此布尔运算缺少可导出的合成轮廓，不能保证外观。", node.name);
     if (["CONNECTOR", "SHAPE_WITH_TEXT"].includes(node.type)) report.add("special-node", "部分特殊图层仅保留可读取的子图层和基础外观。", node.name);
-    for (const fill of node.fills) if (fill.type === "IMAGE" && (fill.imageTransform || fill.imageScaleMode === "CROP")) report.add("image-crop", "图片保留原始资源，裁剪和局部变换需要检查。", node.name);
+    if (target !== "fig" && node.arcData && (node.arcData.innerRadius || Math.abs(node.arcData.endingAngle - node.arcData.startingAngle - Math.PI * 2) > 0.001)) report.add("arc-shape", "圆弧或环形的参数尚不能等价转换。", node.name);
+    if (target !== "fig" && node.strokes.some((stroke) => String(stroke.cap || node.strokeCap).startsWith("ARROW"))) report.add("arrow-cap", "箭头端点尚不能等价转换。", node.name);
+    if (target === "sketch" && node.effects.filter((effect) => effect.type.includes("BLUR")).length > 1) report.add("multiple-blurs", "Sketch 导出目前只能保留一个模糊效果。", node.name);
+    if (target === "xd" && node.effects.some((effect) => effect.blendMode && effect.blendMode !== "NORMAL")) report.add("xd-effect-blend", "此效果的混合模式尚不能等价导出到 XD。", node.name);
+    if (target === "xd" && node.effects.some((effect) => effect.spread)) report.add("xd-shadow-spread", "XD 阴影扩展参数尚不能保证等价保留。", node.name);
+    if (target === "xd" && node.type === "TEXT" && node.fills.some((fill) => fill.type !== "SOLID")) report.add("xd-text-paint", "XD 可编辑文字不支持等价保留此图片或渐变填充。", node.name);
+    if (target === "xd" && node.type === "TEXT" && hasMixedTextStyles(node)) report.add("xd-text-runs", "XD 导出暂使用每个文字图层的基础样式，混排样式需要检查。", node.name);
   }
 }
 

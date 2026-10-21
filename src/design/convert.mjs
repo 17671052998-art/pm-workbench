@@ -16,12 +16,23 @@ export async function readDesign(bytes, filename) {
   return { ...result, thumbnail, source, filename, issues: report.list(), stats: stats(result.graph) };
 }
 
-export async function convertDesign(parsed, target) {
+export async function convertDesign(parsed, target, { strict = true } = {}) {
   if (!formats[target] || target === parsed.source) throw new Error("请选择不同于原文件的目标格式。");
   const report = createReport();
-  for (const issue of parsed.issues) for (let i = 0; i < issue.count; i++) report.add(issue.code, issue.message, issue.examples[i % (issue.examples.length || 1)]);
+  for (const issue of parsed.issues) for (let i = 0; i < issue.count; i++) report.add(issue.code, issue.message, issue.examples[i % (issue.examples.length || 1)], issue.severity);
+  function requirePreservation() {
+    const issues = report.list();
+    if (strict && issues.some((issue) => issue.severity !== "info")) {
+      const error = new Error("发现无法等价保留的属性，已停止转换。请查看下方具体图层和原因；如接受简化，可关闭保留检查后重试。");
+      error.code = "PRESERVATION_REQUIRED";
+      error.issues = issues;
+      throw error;
+    }
+  }
   targetReport(parsed.graph, target, report);
+  requirePreservation();
   const name = parsed.filename.replace(/\.(fig|xd|sketch)$/i, "");
   const bytes = await ({ fig: writeFigma, sketch: writeSketch, xd: writeXD })[target](parsed.graph, name, parsed.thumbnail, report);
+  requirePreservation();
   return { bytes, filename: `${name}.${target}`, source: parsed.source, target, stats: parsed.stats, issues: report.list() };
 }
