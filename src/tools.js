@@ -1,4 +1,5 @@
 import { mountBackgroundTool } from "./background-remove.js";
+import { mountDesignWorkspace, renderDesignWorkspace } from "./design-convert.js";
 
 const workerURL = new URL("./gif-worker.js", document.currentScript.src);
 workerURL.search = "v=custom-timeline-1";
@@ -6,9 +7,9 @@ let cleanup = () => {};
 
 function render() {
   return `
-    <header class="page-head"><div><h1 class="page-title">工具箱</h1><p class="page-subtitle">处理产品工作中的常用素材，减少重复操作。</p></div><span class="badge green">本地处理 · 无需上传</span></header>
+    <header class="page-head"><div><h1 class="page-title">工具箱</h1><p class="page-subtitle">处理产品工作中的常用素材与设计文件，减少重复操作。</p></div><span class="badge green">按工具说明操作</span></header>
     <section id="toolCatalog" class="tool-catalog" aria-labelledby="toolCatalogTitle">
-      <div class="tool-catalog-head"><div><h2 id="toolCatalogTitle">素材处理</h2><p>选择工具后进入操作页面</p></div><span>2 个工具</span></div>
+      <div class="tool-catalog-head"><div><h2 id="toolCatalogTitle">常用工具</h2><p>选择工具后进入操作页面</p></div><span>3 个工具</span></div>
       <div class="tool-catalog-grid">
       <button id="gifToolOpen" class="tool-card" type="button" aria-label="打开 GIF 转 SVGA 工具">
         <span class="tool-card-art" aria-hidden="true">
@@ -42,6 +43,21 @@ function render() {
           </svg>
         </span>
         <span class="tool-card-content"><span class="tool-card-title">移除图片背景</span><span class="tool-card-description">静态图片精修，GIF 动画逐帧去除背景并透明导出</span><span class="tool-card-meta"><span class="badge green">可用</span><span>进入工具 <b aria-hidden="true">→</b></span></span></span>
+      </button>
+      <button id="designToolOpen" class="tool-card" type="button" aria-label="打开设计文件互转工具">
+        <span class="tool-card-art" aria-hidden="true">
+          <svg class="tool-card-picture" viewBox="0 0 320 160" role="img">
+            <defs><linearGradient id="designArtGradient" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#303962"/><stop offset="1" stop-color="#6c78d9"/></linearGradient></defs>
+            <rect width="320" height="160" rx="18" fill="url(#designArtGradient)"/>
+            <circle cx="280" cy="20" r="54" fill="#fff" opacity=".07"/><circle cx="34" cy="149" r="58" fill="#fff" opacity=".06"/>
+            <rect x="30" y="45" width="69" height="70" rx="13" fill="#fff"/><rect x="39" y="56" width="51" height="10" rx="5" fill="#e7eafd"/><text x="64" y="94" text-anchor="middle" fill="#303962" font-size="16" font-weight="700">XD</text>
+            <path d="M109 80h24m-7-7 7 7-7 7" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+            <rect x="140" y="32" width="69" height="96" rx="15" fill="#fff"/><circle cx="165" cy="57" r="9" fill="#f56a69"/><circle cx="184" cy="57" r="9" fill="#f8b962"/><circle cx="165" cy="76" r="9" fill="#9b7af3"/><circle cx="184" cy="76" r="9" fill="#64bdd4"/><circle cx="165" cy="95" r="9" fill="#67c8a5"/>
+            <path d="M217 80h24m-7-7 7 7-7 7" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+            <rect x="250" y="45" width="48" height="70" rx="13" fill="#fff"/><path d="M262 66h24l-9 28h-6z" fill="#f7b45c"/>
+          </svg>
+        </span>
+        <span class="tool-card-content"><span class="tool-card-title">设计文件互转</span><span class="tool-card-description">Sketch、XD 与 Figma 的原生文件转换入口和操作步骤</span><span class="tool-card-meta"><span class="badge">Figma 内完成</span><span>进入工具 <b aria-hidden="true">→</b></span></span></span>
       </button>
       </div>
     </section>
@@ -136,7 +152,8 @@ function render() {
         </div>
       </div>
       <div class="tool-notes"><strong>使用说明</strong><p>自动处理依据每张图片或每一帧边缘的相近颜色，不是 AI 人像分割。静态图片可用套索或画笔手动调整；GIF 会逐帧自动处理并保留动画节奏和循环信息。</p></div>
-    </section>`;
+    </section>
+    ${renderDesignWorkspace()}`;
 }
 
 function mount(root) {
@@ -156,6 +173,7 @@ function mount(root) {
   let busy = false;
   let converterOpen = false;
   const disposeBackground = mountBackgroundTool(root, on);
+  mountDesignWorkspace(root, on);
   root.dataset.previewBackground = "black";
   const formatSize = (bytes) => bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 / 1024).toFixed(2)} MB`;
   const status = (text, error = false) => {
@@ -310,6 +328,7 @@ function mount(root) {
     $("toolCatalog").hidden = true;
     $("toolWorkspace").hidden = false;
     $("bgWorkspace").hidden = true;
+    $("designWorkspace").hidden = true;
     $("converterTitle").focus();
   }
   function showBackground() {
@@ -317,13 +336,23 @@ function mount(root) {
     $("toolCatalog").hidden = true;
     $("toolWorkspace").hidden = true;
     $("bgWorkspace").hidden = false;
+    $("designWorkspace").hidden = true;
     $("bgTitle").focus();
   }
+  function showDesign() {
+    converterOpen = false;
+    $("toolCatalog").hidden = true;
+    $("toolWorkspace").hidden = true;
+    $("bgWorkspace").hidden = true;
+    $("designWorkspace").hidden = false;
+    $("designTitle").focus();
+  }
   function showCatalog() {
-    const returnTarget = $("bgWorkspace").hidden ? $("gifToolOpen") : $("bgToolOpen");
+    const returnTarget = !$("designWorkspace").hidden ? $("designToolOpen") : $("bgWorkspace").hidden ? $("gifToolOpen") : $("bgToolOpen");
     converterOpen = false;
     $("toolWorkspace").hidden = true;
     $("bgWorkspace").hidden = true;
+    $("designWorkspace").hidden = true;
     $("toolCatalog").hidden = false;
     returnTarget.focus();
   }
@@ -331,6 +360,8 @@ function mount(root) {
   on($("gifToolBack"), "click", showCatalog);
   on($("bgToolOpen"), "click", showBackground);
   on($("bgToolBack"), "click", showCatalog);
+  on($("designToolOpen"), "click", showDesign);
+  on($("designToolBack"), "click", showCatalog);
   on($("gifDrop"), "click", () => $("gifFile").click());
   on($("gifReplace"), "click", () => $("gifFile").click());
   on($("gifFile"), "change", (event) => choose(event.target.files[0]));
