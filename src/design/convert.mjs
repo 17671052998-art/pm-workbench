@@ -1,3 +1,4 @@
+import "./compat.mjs";
 import { EMPTY_PNG, createReport, stats, targetReport } from "./common.mjs";
 import { readFigma, writeFigma } from "./figma.mjs";
 import { readSketch, writeSketch } from "./sketch.mjs";

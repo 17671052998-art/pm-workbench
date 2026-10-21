@@ -98,6 +98,8 @@ GIF 动画支持逐帧移除背景并重新导出透明 GIF，保留源动画帧
 
 不再设置原文件大小上限，大文件处理取决于浏览器和电脑可用内存。仍保留解压内容 400 MB、50,000 个图层的安全保护。目标软件需要安装原文件使用的字体。先保留原稿，再检查导出的文件。测试覆盖六个转换方向的结构与资源保留、超过 100 MB 文件的浏览器实际转换与下载及错误恢复；本机安装 Sketch 时还会使用原生工具验证生成的 `.sketch`。
 
+转换器内置 `toSorted`、`toReversed` 的兼容实现，支持缺少这些数组接口的浏览器，不改写已有原生实现。回归测试会在转换 Worker 中移除两个原生接口，验证 Figma 文件仍能读取并下载 XD / Sketch 结果。
+
 格式适配代码位于 `src/design/`。Figma 二进制读写使用内嵌的 MIT 开源 [OpenPencil](https://github.com/open-pencil/open-pencil) 编解码库，Sketch 与 XD 的图层和文件结构适配由本项目实现；压缩使用 `fflate`，路径规范化使用 `svgpath`。许可证随构建写入 `assets/THIRD_PARTY_LICENSES.txt`。
 
 ```bash
