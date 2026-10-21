@@ -166,6 +166,7 @@ let cloudAccounts = [];
 let accountListLoading = false;
 let accountListError = "";
 let accountRequestVersion = 0;
+let accountCreatePending = false;
 const getLocalManagedAccounts = () => {
   try {
     const accounts = JSON.parse(localStorage.getItem(accountStorageKey) || "[]");
@@ -189,17 +190,20 @@ const accountSettingsPage = () => {
   ];
   return `
     <header class="page-head"><div><h1 class="page-title">管理设置</h1><p class="page-subtitle">${sharedAuth.enabled ? "云端统一管理账号，创建后可在其他电脑和浏览器登录。" : "本机演示模式：账号仅在当前浏览器可用，不支持其他电脑登录。"}</p></div><span class="badge ${sharedAuth.enabled ? "green" : ""}">${sharedAuth.enabled ? "云端共享账号" : "仅本机演示"}</span></header>
-    ${accountListError ? `<div class="account-notice error" role="alert">${escapeHTML(accountListError)}<button class="text-btn" id="accountRetry" type="button">重试</button></div>` : ""}
-    ${localAccounts.length ? `<div class="account-notice"><div><strong>此浏览器有 ${localAccounts.length} 个旧账号尚待核对</strong><p>迁移后可跨设备登录，保留原密码和启用状态。只上传加盐密码摘要，不上传明文；已存在的云端账号会跳过，不会覆盖。</p></div><button class="btn secondary" id="accountMigrate" type="button" ${accountListLoading || accountListError ? "disabled" : ""}>迁移本机旧账号</button></div>` : ""}
-    <section class="account-summary"><article><small>全部账号</small><strong>${accounts.length + 1}</strong></article><article><small>正常启用</small><strong>${enabledCount}</strong></article><article><small>已停用</small><strong>${accounts.length + 1 - enabledCount}</strong></article></section>
+    <div id="accountNotices">${accountListError ? `<div class="account-notice error" role="alert">${escapeHTML(accountListError)}<button class="text-btn" id="accountRetry" type="button">重试</button></div>` : ""}
+    ${localAccounts.length ? `<div class="account-notice"><div><strong>此浏览器有 ${localAccounts.length} 个旧账号可迁移</strong><p>此提醒仅针对旧版本账号，不影响新建云端账号使用。迁移保留原密码和启用状态，只上传加盐密码摘要，不上传明文；已存在的云端账号会跳过，不会覆盖。</p></div><button class="btn secondary" id="accountMigrate" type="button" ${accountListLoading || accountListError ? "disabled" : ""}>迁移本机旧账号</button></div>` : ""}
+    </div>
+    <section class="account-summary"><article><small>全部账号</small><strong>${accountListLoading ? "--" : accounts.length + 1}</strong></article><article><small>正常启用</small><strong>${accountListLoading ? "--" : enabledCount}</strong></article><article><small>已停用</small><strong>${accountListLoading ? "--" : accounts.length + 1 - enabledCount}</strong></article></section>
     <section class="account-layout">
       <form id="accountCreateForm" class="panel account-create" autocomplete="off">
         <header class="panel-head"><div><h2>创建登录账号</h2><p>${sharedAuth.enabled ? "创建成功后，成员即可在其他电脑登录。" : "仅在此浏览器登录，不能分享给其他电脑。"}</p></div></header>
         <div class="account-form-body">
-          <label class="form-label" for="accountUsername">账号名称<input id="accountUsername" name="username" type="text" maxlength="30" placeholder="请输入账号名称" required /></label>
-          <label class="form-label" for="accountPassword">登录密码<span class="password-wrap account-password-wrap"><input id="accountPassword" name="password" type="password" minlength="6" maxlength="64" placeholder="至少 6 位" required /><button id="accountPasswordToggle" class="password-toggle" type="button">显示</button></span></label>
+          <label class="form-label" for="accountUsername">新成员账号<input id="accountUsername" name="newMemberUsername" type="text" maxlength="30" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="accountUsernameHint accountFormError" placeholder="为成员输入新的账号名称" required /></label>
+          <p class="account-field-hint" id="accountUsernameHint">3-30 位字母、数字、点、下划线或短横线；admin 已保留，不能重复创建。</p>
+          <label class="form-label" for="accountPassword">新成员密码<span class="password-wrap account-password-wrap"><input id="accountPassword" name="newMemberPassword" type="password" minlength="6" maxlength="64" autocomplete="new-password" aria-describedby="accountFormError" placeholder="设置成员密码，至少 6 位" required /><button id="accountPasswordToggle" class="password-toggle" type="button">显示</button></span></label>
           <label class="account-enabled"><input id="accountEnabled" type="checkbox" checked /> 创建后立即启用</label>
           <p id="accountFormError" class="form-error" role="alert"></p>
+          <p id="accountFormSuccess" class="account-form-success" role="status" aria-live="polite" hidden></p>
           <button class="btn primary account-submit" type="submit" ${sharedAuth.enabled && (accountListLoading || accountListError) ? "disabled" : ""}>${icon("plus")} 创建账号</button>
           <p class="account-security-note">${sharedAuth.enabled ? "密码经加盐摘要和服务端密钥保护后保存在云端，不保存明文。" : "密码摘要仅保存在当前浏览器，不会同步到其他设备。"}</p>
         </div>
@@ -332,10 +336,12 @@ async function refreshCloudAccounts() {
   const requestVersion = ++accountRequestVersion;
   accountListLoading = true;
   accountListError = "";
+  updateAccountSettingsData();
   try {
     const accounts = await sharedAuth.listAccounts();
     if (requestVersion !== accountRequestVersion || currentUser !== "admin") return;
     cloudAccounts = accounts;
+    return true;
   } catch (error) {
     if (requestVersion !== accountRequestVersion || currentUser !== "admin") return;
     if (error.code === "UNAUTHENTICATED") {
@@ -344,12 +350,31 @@ async function refreshCloudAccounts() {
       return;
     }
     accountListError = error.message;
+    return false;
   } finally {
     if (requestVersion === accountRequestVersion) {
       accountListLoading = false;
-      if (currentPage === "settings" && currentUser === "admin") root.innerHTML = accountSettingsPage();
+      updateAccountSettingsData();
     }
   }
+}
+
+function updateAccountSettingsData() {
+  if (currentPage !== "settings" || currentUser !== "admin") return;
+  const template = document.createElement("template");
+  template.innerHTML = accountSettingsPage();
+  // Refresh remote data without replacing the form or discarding input in progress.
+  for (const selector of ["#accountNotices", ".account-summary", ".account-list"]) {
+    root.querySelector(selector)?.replaceWith(template.content.querySelector(selector));
+  }
+  const submit = root.querySelector('#accountCreateForm button[type="submit"]');
+  if (submit) submit.disabled = accountCreatePending || accountListLoading || Boolean(accountListError);
+}
+
+function accountFormError(form, message, field) {
+  form.querySelector("#accountFormError").textContent = message;
+  form.querySelector("#accountFormSuccess").hidden = true;
+  if (field) { field.setAttribute("aria-invalid", "true"); field.focus(); }
 }
 
 function openModal() {
@@ -414,8 +439,6 @@ document.addEventListener("click", async (event) => {
   }
   const accountAction = event.target.closest("[data-account-action]");
   if (event.target.closest("#accountRefresh, #accountRetry") && currentUser === "admin" && sharedAuth.enabled) {
-    accountListLoading = true;
-    root.innerHTML = accountSettingsPage();
     await refreshCloudAccounts();
   }
   const migrate = event.target.closest("#accountMigrate");
@@ -471,52 +494,78 @@ document.addEventListener("click", async (event) => {
 document.addEventListener("submit", async (event) => {
   if (!event.target.matches("#accountCreateForm")) return;
   event.preventDefault();
-  if (currentUser !== "admin") return;
-  const usernameInput = root.querySelector("#accountUsername");
-  const passwordInput = root.querySelector("#accountPassword");
-  const error = root.querySelector("#accountFormError");
+  if (currentUser !== "admin" || accountCreatePending || (sharedAuth.enabled && (accountListLoading || accountListError))) return;
+  const form = event.target;
+  const usernameInput = form.querySelector("#accountUsername");
+  const passwordInput = form.querySelector("#accountPassword");
+  const error = form.querySelector("#accountFormError");
+  error.textContent = "";
+  form.querySelector("#accountFormSuccess").hidden = true;
+  for (const input of [usernameInput, passwordInput]) input.removeAttribute("aria-invalid");
   const username = normalizeUsername(usernameInput.value);
   const password = passwordInput.value;
   if (!/^[a-z0-9._-]{3,30}$/.test(username)) {
-    error.textContent = "账号需为 3-30 位字母、数字、点、下划线或短横线。";
-    usernameInput.focus();
+    accountFormError(form, "账号需为 3-30 位字母、数字、点、下划线或短横线。", usernameInput);
     return;
   }
-  if (username === "admin" || getManagedAccounts().some((account) => account.username === username)) {
-    error.textContent = "该账号已存在，请更换账号名称。";
-    usernameInput.focus();
+  if (username === "admin") {
+    accountFormError(form, "admin 是已存在的系统管理员账号，请为成员输入一个新的账号名称。", usernameInput);
+    return;
+  }
+  if (getManagedAccounts().some((account) => account.username === username)) {
+    accountFormError(form, `账号“${username}”已存在，无需重复创建；请在右侧列表查看，或更换账号名称。`, usernameInput);
     return;
   }
   if (password.length < 6) {
-    error.textContent = "密码至少需要 6 位。";
-    passwordInput.focus();
+    accountFormError(form, "密码至少需要 6 位。", passwordInput);
     return;
   }
-  const submit = event.target.querySelector("button[type=submit]");
+  const submit = form.querySelector("button[type=submit]");
+  const enabled = form.querySelector("#accountEnabled").checked;
+  accountCreatePending = true;
   submit.disabled = true;
   submit.textContent = "正在创建…";
+  for (const input of form.querySelectorAll("input")) input.disabled = true;
   try {
     if (sharedAuth.enabled) {
-      const enabled = root.querySelector("#accountEnabled").checked;
-      await sharedAuth.createAccount(username, password, enabled);
-      await refreshCloudAccounts();
-      showToast(`${username} 创建成功，${enabled ? "可在其他电脑登录" : "当前已停用"}`);
+      const { account } = await sharedAuth.createAccount(username, password, enabled);
+      if (!form.isConnected || currentUser !== "admin") return;
+      form.reset();
+      passwordInput.type = "password";
+      form.querySelector("#accountPasswordToggle").textContent = "显示";
+      const success = form.querySelector("#accountFormSuccess");
+      success.hidden = false;
+      success.textContent = `账号“${account.username}”已保存到云端。${account.enabled ? "成员可在其他电脑使用该账号和刚设置的密码登录。" : "当前为停用状态，启用后才能登录。"}`;
+      const refreshed = await refreshCloudAccounts();
+      if (refreshed === false && success.isConnected) success.textContent += " 账号列表刷新失败，请点击重试；无需重复创建。";
+      showToast(`${account.username} 已保存到云端`);
       return;
     }
     const salt = createSalt();
-    const account = { id: crypto.randomUUID(), username, salt, passwordHash: await hashAccountPassword(password, salt), enabled: root.querySelector("#accountEnabled").checked, createdAt: new Date().toISOString(), lastLogin: null };
+    const account = { id: crypto.randomUUID(), username, salt, passwordHash: await hashAccountPassword(password, salt), enabled, createdAt: new Date().toISOString(), lastLogin: null };
     saveManagedAccounts([...getManagedAccounts(), account]);
     render("settings");
     showToast(`${username} 创建成功`);
   } catch (failure) {
-    submit.disabled = false;
-    submit.textContent = "创建账号";
-    error.textContent = sharedAuth.enabled ? failure.message : "账号创建失败，请刷新页面后重试。";
+    if (form.isConnected) accountFormError(form, sharedAuth.enabled ? failure.message : "账号创建失败，请刷新页面后重试。");
+  } finally {
+    accountCreatePending = false;
+    if (form.isConnected) {
+      submit.disabled = sharedAuth.enabled && (accountListLoading || Boolean(accountListError));
+      submit.innerHTML = `${icon("plus")} 创建账号`;
+      for (const input of form.querySelectorAll("input")) input.disabled = false;
+    }
   }
 });
 
 document.addEventListener("input", (event) => {
   if (event.target.matches(".module-search")) runSearch(event.target.value);
+  if (event.target.matches("#accountUsername, #accountPassword")) {
+    event.target.removeAttribute("aria-invalid");
+    const form = event.target.closest("form");
+    form.querySelector("#accountFormError").textContent = "";
+    form.querySelector("#accountFormSuccess").hidden = true;
+  }
 });
 
 document.querySelector("#modalClose").addEventListener("click", closeModal);
