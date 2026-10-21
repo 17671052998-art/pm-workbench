@@ -31,6 +31,11 @@ async function main() {
     try {
       const pathname = new URL(request.url, "http://localhost").pathname;
       if (!pathname.startsWith("/pm-workbench/")) throw new Error("Not found");
+      if (pathname === "/pm-workbench/auth-config.js") {
+        response.writeHead(200, { "Content-Type": "application/javascript" });
+        response.end('window.OrbitAuthConfig = { mode: "local", apiBase: "" };');
+        return;
+      }
       const filename = path.resolve(project, pathname.slice("/pm-workbench/".length) || "index.html");
       if (!filename.startsWith(project + path.sep)) throw new Error("Not found");
       const types = { ".html": "text/html", ".js": "application/javascript", ".css": "text/css" };

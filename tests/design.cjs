@@ -81,6 +81,11 @@ async function main() {
     try {
       const url = new URL(request.url, "http://localhost");
       if (!url.pathname.startsWith("/pm-workbench/")) throw new Error("Not found");
+      if (url.pathname === "/pm-workbench/auth-config.js") {
+        response.writeHead(200, { "Content-Type": "application/javascript" });
+        response.end('window.OrbitAuthConfig = { mode: "local", apiBase: "" };');
+        return;
+      }
       const filename = path.resolve(project, url.pathname.slice(14) || "index.html");
       if (!filename.startsWith(project + path.sep)) throw new Error("Not found");
       const bytes = await fs.readFile(filename);
@@ -98,6 +103,7 @@ async function main() {
     page.on("request", (request) => { if (["POST", "PUT"].includes(request.method())) uploads.push(request.url()); });
     await page.route("https://**/*", (route) => route.abort());
     await page.goto(`http://127.0.0.1:${server.address().port}/pm-workbench/`);
+    assert.deepEqual(errors, []);
     await page.locator("#loginUsername").fill("admin"); await page.locator("#loginPassword").fill("admin");
     await page.locator("#loginForm").evaluate((form) => form.requestSubmit());
     await page.locator("#appShell").waitFor({ state: "visible" });

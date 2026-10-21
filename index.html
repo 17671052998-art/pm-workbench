@@ -82,11 +82,20 @@
           </label>
           <div class="login-options">
             <label><input id="rememberLogin" type="checkbox" checked /> 记住登录状态</label>
-            <button type="button">忘记密码？</button>
+            <button id="forgotPassword" type="button">忘记密码？</button>
           </div>
           <p class="login-error" id="loginError" role="alert"></p>
           <button class="login-submit" type="submit">登录工作台 <svg><use href="#i-arrow"></use></svg></button>
-          <p class="login-tip">管理员演示账号：<strong>admin</strong> / <strong>admin</strong></p>
+          <p class="login-tip" id="loginTip">正在加载登录服务…</p>
+        </form>
+        <form class="login-card" id="adminSetupForm" hidden>
+          <p class="login-kicker">云端账号服务</p>
+          <h2>设置管理员密码</h2>
+          <p class="login-desc">管理员账号为 admin。请设置至少 12 位的专用密码；初始化只可执行一次，不能再使用公开的演示密码。</p>
+          <label class="login-label">管理员密码<input id="setupPassword" type="password" minlength="12" maxlength="128" autocomplete="new-password" required /></label>
+          <label class="login-label">再次确认密码<input id="setupPasswordConfirm" type="password" minlength="12" maxlength="128" autocomplete="new-password" required /></label>
+          <p class="login-error" id="setupError" role="alert"></p>
+          <button class="login-submit" type="submit">创建云端管理员</button>
         </form>
       </div>
     </section>
@@ -187,6 +196,8 @@
 
     <div class="toast" id="toast"><svg><use href="#i-check"></use></svg><span>创建成功</span></div>
     <script src="./assets/tools.js?v=native-design-1"></script>
-    <script src="./app.js?v=account-settings-1"></script>
+    <script src="./auth-config.js?v=shared-accounts-1"></script>
+    <script src="./auth-client.js?v=shared-accounts-1"></script>
+    <script src="./app.js?v=shared-accounts-1"></script>
   </body>
 </html>

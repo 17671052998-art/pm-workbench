@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "build": "node scripts/build.cjs",
-    "test": "node tests/converter.cjs && node tests/background.cjs && node tests/design.cjs"
+    "test": "node tests/auth.cjs && node tests/converter.cjs && node tests/background.cjs && node tests/design.cjs",
+    "test:auth": "node tests/auth.cjs"
   },
   "dependencies": {
     "@open-pencil/fig": "0.16.0",
@@ -20,6 +21,7 @@
   "devDependencies": {
     "esbuild": "0.28.2",
     "playwright": "1.62.1",
-    "svgaplayerweb": "2.3.2"
+    "svgaplayerweb": "2.3.2",
+    "wrangler": "4.151.2"
   }
 }

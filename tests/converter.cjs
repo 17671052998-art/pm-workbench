@@ -23,6 +23,11 @@ async function main() {
     try {
       const url = new URL(request.url, "http://localhost");
       if (!url.pathname.startsWith("/pm-workbench/")) throw new Error("Not found");
+      if (url.pathname === "/pm-workbench/auth-config.js") {
+        response.writeHead(200, { "Content-Type": "application/javascript" });
+        response.end('window.OrbitAuthConfig = { mode: "local", apiBase: "" };');
+        return;
+      }
       const filename = path.resolve(project, url.pathname.slice("/pm-workbench/".length) || "index.html");
       if (!filename.startsWith(project + path.sep)) throw new Error("Not found");
       const content = await fs.readFile(filename);

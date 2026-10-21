@@ -161,7 +161,12 @@ const iterationPage = () => `
   <div class="empty-state"><strong>没有找到相关事项</strong><span>试试其他关键词。</span></div>`;
 
 const accountStorageKey = "orbit-managed-accounts";
-const getManagedAccounts = () => {
+const sharedAuth = window.OrbitAuth;
+let cloudAccounts = [];
+let accountListLoading = false;
+let accountListError = "";
+let accountRequestVersion = 0;
+const getLocalManagedAccounts = () => {
   try {
     const accounts = JSON.parse(localStorage.getItem(accountStorageKey) || "[]");
     return Array.isArray(accounts) ? accounts : [];
@@ -169,38 +174,42 @@ const getManagedAccounts = () => {
     return [];
   }
 };
+const getManagedAccounts = () => sharedAuth.enabled ? cloudAccounts : getLocalManagedAccounts();
 const saveManagedAccounts = (accounts) => localStorage.setItem(accountStorageKey, JSON.stringify(accounts));
 const normalizeUsername = (value) => value.trim().toLowerCase();
 const getCurrentUserDisplayName = () => currentUser === "admin" ? "管理员" : currentUser || "林晓";
 const formatAccountTime = (value) => value ? new Date(value).toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }) : "尚未登录";
 const accountSettingsPage = () => {
   const accounts = getManagedAccounts();
+  const localAccounts = sharedAuth.enabled ? getLocalManagedAccounts() : [];
   const enabledCount = accounts.filter((account) => account.enabled).length + 1;
   const rows = [
     `<tr><td><span class="account-name"><span class="avatar">管</span><span><strong>admin</strong><small>系统管理员</small></span></span></td><td><span class="status-tag done">启用</span></td><td>系统内置</td><td>当前账号</td><td><span class="account-protected">不可操作</span></td></tr>`,
     ...accounts.map((account) => `<tr data-account-row="${escapeHTML(account.id)}"><td><span class="account-name"><span class="avatar">${escapeHTML(account.username.slice(0, 1).toUpperCase())}</span><span><strong>${escapeHTML(account.username)}</strong><small>普通成员</small></span></span></td><td><span class="status-tag ${account.enabled ? "done" : "draft"}">${account.enabled ? "启用" : "已停用"}</span></td><td>${escapeHTML(formatAccountTime(account.createdAt))}</td><td>${escapeHTML(formatAccountTime(account.lastLogin))}</td><td><span class="account-actions"><button class="text-btn" type="button" data-account-action="toggle" data-account-id="${escapeHTML(account.id)}">${account.enabled ? "停用" : "启用"}</button><button class="text-btn danger" type="button" data-account-action="delete" data-account-id="${escapeHTML(account.id)}">删除</button></span></td></tr>`),
   ];
   return `
-    <header class="page-head"><div><h1 class="page-title">管理设置</h1><p class="page-subtitle">管理可登录工作台的账号及使用状态。</p></div><span class="badge green">仅管理员可见</span></header>
+    <header class="page-head"><div><h1 class="page-title">管理设置</h1><p class="page-subtitle">${sharedAuth.enabled ? "云端统一管理账号，创建后可在其他电脑和浏览器登录。" : "本机演示模式：账号仅在当前浏览器可用，不支持其他电脑登录。"}</p></div><span class="badge ${sharedAuth.enabled ? "green" : ""}">${sharedAuth.enabled ? "云端共享账号" : "仅本机演示"}</span></header>
+    ${accountListError ? `<div class="account-notice error" role="alert">${escapeHTML(accountListError)}<button class="text-btn" id="accountRetry" type="button">重试</button></div>` : ""}
+    ${localAccounts.length ? `<div class="account-notice"><div><strong>此浏览器有 ${localAccounts.length} 个旧账号尚待核对</strong><p>迁移后可跨设备登录，保留原密码和启用状态。只上传加盐密码摘要，不上传明文；已存在的云端账号会跳过，不会覆盖。</p></div><button class="btn secondary" id="accountMigrate" type="button" ${accountListLoading || accountListError ? "disabled" : ""}>迁移本机旧账号</button></div>` : ""}
     <section class="account-summary"><article><small>全部账号</small><strong>${accounts.length + 1}</strong></article><article><small>正常启用</small><strong>${enabledCount}</strong></article><article><small>已停用</small><strong>${accounts.length + 1 - enabledCount}</strong></article></section>
     <section class="account-layout">
       <form id="accountCreateForm" class="panel account-create" autocomplete="off">
-        <header class="panel-head"><div><h2>创建登录账号</h2><p>设置后可直接使用该账号和密码登录。</p></div></header>
+        <header class="panel-head"><div><h2>创建登录账号</h2><p>${sharedAuth.enabled ? "创建成功后，成员即可在其他电脑登录。" : "仅在此浏览器登录，不能分享给其他电脑。"}</p></div></header>
         <div class="account-form-body">
           <label class="form-label" for="accountUsername">账号名称<input id="accountUsername" name="username" type="text" maxlength="30" placeholder="请输入账号名称" required /></label>
           <label class="form-label" for="accountPassword">登录密码<span class="password-wrap account-password-wrap"><input id="accountPassword" name="password" type="password" minlength="6" maxlength="64" placeholder="至少 6 位" required /><button id="accountPasswordToggle" class="password-toggle" type="button">显示</button></span></label>
           <label class="account-enabled"><input id="accountEnabled" type="checkbox" checked /> 创建后立即启用</label>
           <p id="accountFormError" class="form-error" role="alert"></p>
-          <button class="btn primary account-submit" type="submit">${icon("plus")} 创建账号</button>
-          <p class="account-security-note">密码会经过加盐处理后保存在当前浏览器，不保存明文。</p>
+          <button class="btn primary account-submit" type="submit" ${sharedAuth.enabled && (accountListLoading || accountListError) ? "disabled" : ""}>${icon("plus")} 创建账号</button>
+          <p class="account-security-note">${sharedAuth.enabled ? "密码经加盐摘要和服务端密钥保护后保存在云端，不保存明文。" : "密码摘要仅保存在当前浏览器，不会同步到其他设备。"}</p>
         </div>
       </form>
       <section class="data-panel account-list">
-        <header class="panel-head"><div><h2>登录账号</h2><p>共 ${accounts.length + 1} 个账号，可启用、停用或删除成员账号。</p></div></header>
-        <table class="data-table"><thead><tr><th>账号</th><th>状态</th><th>创建时间</th><th>最近登录</th><th>操作</th></tr></thead><tbody>${rows.join("")}</tbody></table>
+        <header class="panel-head"><div><h2>登录账号</h2><p>${accountListLoading ? "正在读取云端账号…" : `共 ${accounts.length + 1} 个账号，可启用、停用或删除成员账号。`}</p></div>${sharedAuth.enabled ? '<button class="text-btn" id="accountRefresh" type="button">刷新</button>' : ""}</header>
+        <table class="data-table" aria-busy="${accountListLoading}"><thead><tr><th>账号</th><th>状态</th><th>创建时间</th><th>最近登录</th><th>操作</th></tr></thead><tbody>${accountListLoading ? '<tr><td colspan="5">正在加载账号，请稍候…</td></tr>' : accountListError ? '<tr><td colspan="5">账号列表加载失败，请重试。</td></tr>' : rows.join("")}</tbody></table>
       </section>
     </section>
-    <div class="account-browser-note"><strong>使用范围说明</strong><span>当前项目部署在 GitHub Pages，账号数据只保存在创建账号的这个浏览器中，不会同步到其他设备或浏览器。</span></div>`;
+    <div class="account-browser-note"><strong>使用范围说明</strong><span>${sharedAuth.enabled ? "账号由云端统一验证，支持不同设备和浏览器登录。停用或删除账号后，该账号已有登录会话将失效。原型内容和工具文件仍按原方式在本机处理，不会随账号自动同步。" : "尚未连接共享账号服务。当前账号只在此浏览器有效，其他设备无法使用；不要将本机演示账号当作团队账号分发。"}</span></div>`;
 };
 
 const pages = {
@@ -214,6 +223,7 @@ const pages = {
 
 let currentPage = "dashboard";
 let currentUser = null;
+let authRevision = 0;
 const root = document.querySelector("#pageRoot");
 const crumb = document.querySelector("#crumbTitle");
 const modal = document.querySelector("#modalBackdrop");
@@ -278,16 +288,20 @@ function createSalt() {
 }
 
 function showLogin() {
+  ++authRevision;
   window.OrbitTools.dispose();
   currentUser = null;
   loginView.classList.remove("auth-hidden");
   appShell.classList.add("auth-hidden");
   loginPassword.value = "";
   loginError.textContent = "";
-  setTimeout(() => loginUsername.focus(), 50);
+  document.querySelector("#passwordToggle").textContent = "显示";
+  loginPassword.type = "password";
+  loginUsername.focus();
 }
 
 function showWorkbench() {
+  ++authRevision;
   loginView.classList.add("auth-hidden");
   appShell.classList.remove("auth-hidden");
   updateCurrentUserUI();
@@ -301,12 +315,41 @@ function render(page) {
   }
   window.OrbitTools.dispose();
   currentPage = page;
+  if (page === "settings" && sharedAuth.enabled) {
+    accountListLoading = true;
+    accountListError = "";
+  }
   root.innerHTML = pages[page].render();
+  if (page === "settings" && sharedAuth.enabled) refreshCloudAccounts();
   if (page === "tools") window.OrbitTools.mount(root);
   crumb.textContent = pages[page].title;
   document.querySelector('.nav-item[data-page="prototype"] b').textContent = getPrototypeCount();
   document.querySelectorAll(".nav-item[data-page]").forEach((item) => item.classList.toggle("active", item.dataset.page === page));
   root.scrollTop = 0;
+}
+
+async function refreshCloudAccounts() {
+  const requestVersion = ++accountRequestVersion;
+  accountListLoading = true;
+  accountListError = "";
+  try {
+    const accounts = await sharedAuth.listAccounts();
+    if (requestVersion !== accountRequestVersion || currentUser !== "admin") return;
+    cloudAccounts = accounts;
+  } catch (error) {
+    if (requestVersion !== accountRequestVersion || currentUser !== "admin") return;
+    if (error.code === "UNAUTHENTICATED") {
+      showLogin();
+      loginError.textContent = error.message;
+      return;
+    }
+    accountListError = error.message;
+  } finally {
+    if (requestVersion === accountRequestVersion) {
+      accountListLoading = false;
+      if (currentPage === "settings" && currentUser === "admin") root.innerHTML = accountSettingsPage();
+    }
+  }
 }
 
 function openModal() {
@@ -347,7 +390,7 @@ function runSearch(value) {
   if (empty) empty.style.display = visible ? "none" : "block";
 }
 
-document.addEventListener("click", (event) => {
+document.addEventListener("click", async (event) => {
   const nav = event.target.closest("[data-page]");
   const jump = event.target.closest("[data-jump]");
   if (nav) render(nav.dataset.page);
@@ -370,10 +413,47 @@ document.addEventListener("click", (event) => {
     event.target.closest("#accountPasswordToggle").textContent = showPassword ? "隐藏" : "显示";
   }
   const accountAction = event.target.closest("[data-account-action]");
+  if (event.target.closest("#accountRefresh, #accountRetry") && currentUser === "admin" && sharedAuth.enabled) {
+    accountListLoading = true;
+    root.innerHTML = accountSettingsPage();
+    await refreshCloudAccounts();
+  }
+  const migrate = event.target.closest("#accountMigrate");
+  if (migrate && currentUser === "admin" && sharedAuth.enabled) {
+    const accounts = getLocalManagedAccounts();
+    if (!window.confirm(`将此浏览器的 ${accounts.length} 个旧账号及加盐密码摘要迁移到 Cloudflare 账号服务？原密码保持可用，已存在的云端账号不会覆盖。`)) return;
+    migrate.disabled = true;
+    migrate.textContent = "正在迁移…";
+    try {
+      const result = await sharedAuth.importAccounts(accounts);
+      // Keep a local copy until the complete cloud import has been acknowledged.
+      localStorage.removeItem(accountStorageKey);
+      await refreshCloudAccounts();
+      showToast(`迁移完成：新增 ${result.imported} 个，跳过已有 ${result.skipped} 个`);
+    } catch (error) {
+      showToast(error.message);
+      if (migrate.isConnected) { migrate.disabled = false; migrate.textContent = "迁移本机旧账号"; }
+    }
+  }
   if (accountAction && currentUser === "admin") {
     const accounts = getManagedAccounts();
     const account = accounts.find((item) => item.id === accountAction.dataset.accountId);
     if (!account) return;
+    if (sharedAuth.enabled) {
+      const action = accountAction.dataset.accountAction;
+      if (action === "delete" && !window.confirm(`确认删除账号“${account.username}”吗？删除后该账号无法登录，已有会话将失效。`)) return;
+      accountAction.disabled = true;
+      try {
+        if (action === "toggle") await sharedAuth.updateAccount(account.id, !account.enabled);
+        if (action === "delete") await sharedAuth.deleteAccount(account.id);
+        await refreshCloudAccounts();
+        showToast(`${account.username} 已${action === "delete" ? "删除" : account.enabled ? "停用" : "启用"}`);
+      } catch (error) {
+        showToast(error.message);
+        if (accountAction.isConnected) accountAction.disabled = false;
+      }
+      return;
+    }
     if (accountAction.dataset.accountAction === "toggle") {
       account.enabled = !account.enabled;
       saveManagedAccounts(accounts);
@@ -416,15 +496,22 @@ document.addEventListener("submit", async (event) => {
   submit.disabled = true;
   submit.textContent = "正在创建…";
   try {
+    if (sharedAuth.enabled) {
+      const enabled = root.querySelector("#accountEnabled").checked;
+      await sharedAuth.createAccount(username, password, enabled);
+      await refreshCloudAccounts();
+      showToast(`${username} 创建成功，${enabled ? "可在其他电脑登录" : "当前已停用"}`);
+      return;
+    }
     const salt = createSalt();
     const account = { id: crypto.randomUUID(), username, salt, passwordHash: await hashAccountPassword(password, salt), enabled: root.querySelector("#accountEnabled").checked, createdAt: new Date().toISOString(), lastLogin: null };
     saveManagedAccounts([...getManagedAccounts(), account]);
     render("settings");
     showToast(`${username} 创建成功`);
-  } catch {
+  } catch (failure) {
     submit.disabled = false;
     submit.textContent = "创建账号";
-    error.textContent = "账号创建失败，请刷新页面后重试。";
+    error.textContent = sharedAuth.enabled ? failure.message : "账号创建失败，请刷新页面后重试。";
   }
 });
 
@@ -469,6 +556,25 @@ loginForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const username = normalizeUsername(loginUsername.value);
   const password = loginPassword.value;
+  if (sharedAuth.enabled) {
+    const submit = loginForm.querySelector("button[type=submit]");
+    if (submit.disabled) return;
+    if (!username || !password) { loginError.textContent = "请输入账号和密码。"; return; }
+    ++authRevision;
+    submit.disabled = true;
+    loginError.textContent = "正在验证云端账号…";
+    try {
+      const user = await sharedAuth.login(username, password, rememberLogin.checked);
+      currentUser = user.username;
+      loginPassword.value = "";
+      showWorkbench();
+      showToast(`${username} 登录成功`);
+    } catch (error) {
+      loginError.textContent = error.message;
+      loginPassword.focus();
+    } finally { submit.disabled = false; }
+    return;
+  }
   let authenticated = username === "admin" && password === "admin";
   let account = null;
   if (!authenticated) {
@@ -500,18 +606,84 @@ document.querySelector("#passwordToggle").addEventListener("click", (event) => {
   event.currentTarget.textContent = showPassword ? "隐藏" : "显示";
 });
 
-document.querySelector("#logoutButton").addEventListener("click", () => {
+document.querySelector("#logoutButton").addEventListener("click", async () => {
+  if (sharedAuth.enabled) {
+    ++accountRequestVersion;
+    cloudAccounts = [];
+    try { await sharedAuth.logout(); }
+    catch { showToast("本机已退出；网络不可用，云端会话将按有效期到期。"); }
+  }
   localStorage.removeItem("orbit-authenticated");
   sessionStorage.removeItem("orbit-authenticated");
   showLogin();
 });
 
-const restoredUsername = getSessionUsername();
-if (restoredUsername && isValidSessionUser(restoredUsername)) {
-  currentUser = restoredUsername;
-  showWorkbench();
-} else {
+document.querySelector("#forgotPassword").addEventListener("click", () => {
+  loginError.textContent = "请联系管理员核对账号是否启用、是否已迁移到云端，以及登录密码。";
+});
+
+async function initializeLogin() {
+  if (sharedAuth.enabled) {
+    localStorage.removeItem("orbit-authenticated");
+    sessionStorage.removeItem("orbit-authenticated");
+    document.querySelector("#loginTip").textContent = "云端账号登录：支持不同设备和浏览器。请使用管理员分配的账号。";
+    showLogin();
+    const setupToken = new URLSearchParams(location.hash.slice(1)).get("setup");
+    if (setupToken) {
+      history.replaceState(null, "", location.pathname + location.search);
+      loginForm.hidden = true;
+      const setupForm = document.querySelector("#adminSetupForm");
+      setupForm.hidden = false;
+      setupForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const password = document.querySelector("#setupPassword").value;
+        const confirm = document.querySelector("#setupPasswordConfirm").value;
+        const error = document.querySelector("#setupError");
+        if (password.length < 12) { error.textContent = "管理员密码至少需要 12 位。"; return; }
+        if (password !== confirm) { error.textContent = "两次密码不一致。"; return; }
+        const submit = setupForm.querySelector("button[type=submit]");
+        if (submit.disabled) return;
+        submit.disabled = true;
+        error.textContent = "正在初始化管理员…";
+        try {
+          currentUser = (await sharedAuth.setup(password, setupToken)).username;
+          setupForm.reset();
+          setupForm.hidden = true;
+          loginForm.hidden = false;
+          showWorkbench();
+          showToast("云端管理员已创建，请在管理设置中创建或迁移成员账号");
+        } catch (failure) { error.textContent = failure.message; }
+        finally { submit.disabled = false; }
+      });
+      return;
+    }
+    const submit = loginForm.querySelector("button[type=submit]");
+    submit.disabled = true;
+    try {
+      const user = await sharedAuth.restore();
+      if (user) { currentUser = user.username; showWorkbench(); }
+    } catch (error) { loginError.textContent = error.message; }
+    finally { submit.disabled = false; }
+    return;
+  }
+  document.querySelector("#loginTip").innerHTML = '仅本机演示，不支持跨设备账号。管理员：<strong>admin</strong> / <strong>admin</strong>';
+  const restoredUsername = getSessionUsername();
+  if (restoredUsername && isValidSessionUser(restoredUsername)) {
+    currentUser = restoredUsername;
+    showWorkbench();
+    return;
+  }
   localStorage.removeItem("orbit-authenticated");
   sessionStorage.removeItem("orbit-authenticated");
   showLogin();
 }
+initializeLogin();
+
+document.addEventListener("visibilitychange", async () => {
+  if (document.hidden || !sharedAuth.enabled || !currentUser) return;
+  const revision = authRevision;
+  try {
+    const user = await sharedAuth.restore();
+    if (revision === authRevision && !user) { showLogin(); loginError.textContent = "登录已过期或账号已停用，请重新登录。"; }
+  } catch { /* A temporary network failure must not turn into local authentication. */ }
+});

@@ -83,6 +83,8 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-lineca
 .login-error { min-height: 19px; margin: 12px 0 0; color: var(--red); font-size: 11px; }
 .login-submit { display: flex; width: 100%; height: 44px; align-items: center; justify-content: center; gap: 7px; border: 0; border-radius: 8px; color: #fff; background: var(--primary); box-shadow: 0 7px 15px rgba(93,95,239,.22); font-size: 12px; font-weight: 600; transition: .2s; }
 .login-submit:hover { background: var(--primary-dark); }
+.login-submit:disabled { cursor: wait; opacity: .65; }
+.login-card[hidden] { display: none; }
 .login-submit svg { width: 15px; height: 15px; }
 .login-tip { margin-top: 19px; padding-top: 16px; border-top: 1px solid var(--line); color: #9aa2b3; font-size: 11px; text-align: center; }
 .login-tip strong { color: #70798d; font-family: "DM Sans"; }
@@ -308,6 +310,11 @@ kbd { padding: 1px 4px; border: 1px solid #d9dde7; border-radius: 4px; color: #a
 .account-protected { color: #a0a7b6; font-size: 11px; }
 .account-browser-note { display: flex; gap: 10px; margin-top: 18px; padding: 12px 15px; border: 1px solid #dfe3f7; border-radius: 9px; color: #677086; background: #f6f7ff; font-size: 11px; }
 .account-browser-note strong { flex: 0 0 auto; color: #4f5870; }
+.account-notice { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; padding: 14px 16px; border: 1px solid #dfe3f7; border-radius: 9px; color: #4f5870; background: #f6f7ff; font-size: 12px; }
+.account-notice p { margin: 6px 0 0; color: var(--muted); font-size: 11px; line-height: 1.65; }
+.account-notice .btn { flex-shrink: 0; }
+.account-notice.error { color: #b94350; border-color: #f1c8cd; background: #fff5f6; }
+.account-list .panel-head { display: flex; align-items: center; justify-content: space-between; }
 .owner { display: inline-flex; align-items: center; gap: 6px; color: #5f687c; }
 .owner .avatar { width: 24px; height: 24px; font-size: 9px; }
 .status-tag { padding: 3px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; white-space: nowrap; }

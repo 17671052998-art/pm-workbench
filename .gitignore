@@ -6,3 +6,7 @@ build/
 .env.*
 .netlify/
 .vercel/
+.wrangler/
+.dev.vars
+.dev.vars.*
+auth-service/wrangler.jsonc

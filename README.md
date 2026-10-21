@@ -21,7 +21,31 @@ http://127.0.0.1:4173
 密码：admin
 ```
 
-注意：当前登录逻辑是前端演示鉴权，不适合直接作为生产安全方案。
+`auth-config.js` 的 `mode: "local"` 仅用于本机演示：上述账号与本机创建的成员账号不支持跨设备，也不是安全边界。生产环境设置 `mode: "cloud"` 并填写共享账号服务的 HTTPS 地址，不再接受 `admin/admin` 或本机登录标记。
+
+## 共享账号服务
+
+`auth-service/` 是 Cloudflare Workers + D1 账号服务。GitHub Pages 保留原页面地址，账号创建、登录、启停、删除和会话校验请求账号服务；原型内容与工具素材不会随账号自动同步。页面本身和公开仓库仍可访问，不能把前端登录视为私密文件托管。
+
+已配置的生产账号服务：`https://orbit-workbench-auth.jp990916.workers.dev`。生产环境无公开的默认管理员密码，必须由所有者通过一次性初始化入口设置。
+
+首次部署：复制 `auth-service/wrangler.example.jsonc` 为被忽略的 `auth-service/wrangler.jsonc`，创建 D1 数据库并填写真实绑定 ID。配置 `ALLOWED_ORIGINS` 为页面的精确来源，不使用通配符。通过 Wrangler secret 设置随机 `PASSWORD_PEPPER` 和一次性的随机 `SETUP_TOKEN`，不要将它们写入源码、前端或命令行参数。
+
+```bash
+pnpm exec wrangler login
+pnpm exec wrangler d1 create orbit-workbench-accounts --location apac
+pnpm exec wrangler d1 migrations apply DB --remote --config auth-service/wrangler.jsonc
+pnpm exec wrangler deploy --config auth-service/wrangler.jsonc
+pnpm exec wrangler secret bulk --config auth-service/wrangler.jsonc
+```
+
+最后一条命令从标准输入读取机密 JSON。保存部署返回的真实服务地址到 `auth-config.js`，启用云端模式并发布页面。使用只交给站点所有者的 `#setup=<SETUP_TOKEN>` 初始化入口，由所有者设置至少 12 位的管理员密码。页面读取后立即从地址栏清除初始化令牌，服务端通过唯一管理员账号防止重复初始化；完成后删除云端 `SETUP_TOKEN` secret。不要把初始化链接发给其他人。
+
+新密码在浏览器用原生 PBKDF2-HMAC-SHA256、随机 128 位盐、600,000 次迭代计算摘要，服务端用独立 secret 做 HMAC-SHA256 后加密钥保护存储；仅通过 HTTPS 发送密码等价摘要，它仍应视为敏感凭据，不记录或公开。客户端计算不能代替服务端鉴权。云端接口逐一检查随机会话令牌及管理员权限，数据库仅保存令牌的 SHA-256 摘要。会话不勾选记住登录时最长 8 小时，勾选时 7 天；启停、删除和退出会撤销相应会话。登录和初始化有服务端限流，失败或离线时不会回退到本机演示账号。密码 pepper 必须保密并保留，直接轮换它会导致现有密码不可验证。
+
+原浏览器中的管理员可通过「管理设置 → 迁移本机旧账号」上传原盐及 120,000 次迭代摘要，保持旧密码可用。迁移只新增，永不覆盖同名云端账号；完整成功后移除本机旧账号副本。旧账号保留较低的历史迭代次数，建议用强密码重新创建。自动化测试使用两份完全隔离的浏览器存储验证跨设备效果，以及迁移、撤销、权限、错误和不降级行为。
+
+参考：[Cloudflare D1](https://developers.cloudflare.com/d1/get-started/)、[OWASP 密码存储与 Pepper](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)。
 
 ## 功能
 
