@@ -37,13 +37,14 @@ function credentials(password, iterations = 600000) {
 
 async function main() {
   const worker = (await import("../auth-service/worker.mjs")).default;
+  const gateway = (await import("../auth-gateway/public/_worker.js")).default;
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec(await fs.readFile(path.join(__dirname, "../auth-service/migrations/0001_accounts.sql"), "utf8"));
   const env = { DB: d1Adapter(sqlite), PASSWORD_PEPPER: randomBytes(32).toString("hex"), SETUP_TOKEN: randomBytes(32).toString("hex"), ALLOWED_ORIGINS: "https://17671052998-art.github.io" };
-  const call = (route, method = "GET", body, token, headers = {}) => worker.fetch(new Request(`https://auth.example/api${route}`, {
+  const call = (route, method = "GET", body, token, headers = {}) => gateway.fetch(new Request(`https://auth.example/api${route}`, {
     method, headers: { "Content-Type": "application/json", "CF-Connecting-IP": "192.0.2.3", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...headers },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  }), env);
+  }), { AUTH_SERVICE: { fetch: (request) => worker.fetch(request, env) } });
   let browser;
   let server;
   try {
@@ -214,9 +215,25 @@ async function main() {
     assert.equal(await adminPage.locator("#accountPassword").inputValue(), "next-password");
     await adminPage.unroute(`${origin}/api/accounts`, failedRefresh);
     console.log("PASS: account form survives async refresh, new-password autofill hints, reserved/duplicate usernames, single-submit protection, persistent save feedback and retry without losing input.");
+    const unavailablePrimary = "https://unreachable-auth.example";
+    const healthChecks = [];
+    await memberPage.route(`${origin}/pm-workbench/auth-config.js*`, (route) => route.fulfill({
+      contentType: "application/javascript",
+      body: `window.OrbitAuthConfig = ${JSON.stringify({ mode: "cloud", apiBase: unavailablePrimary, fallbackApiBases: [origin] })}`,
+    }));
+    await memberPage.route(`${unavailablePrimary}/**`, (route) => route.abort());
+    memberPage.on("request", (request) => { if (request.url().endsWith("/api/status")) healthChecks.push(request); });
     await open(memberPage);
     assert.equal(await memberPage.evaluate(() => localStorage.getItem("orbit-managed-accounts")), null);
     await signIn(memberPage, " TEAM.USER ", "shared123");
+    assert.ok(healthChecks.some((request) => request.url() === `${unavailablePrimary}/api/status`));
+    assert.ok(healthChecks.some((request) => request.url() === `${origin}/api/status`));
+    for (const request of healthChecks) {
+      assert.equal(request.method(), "GET");
+      assert.equal(request.headers().authorization, undefined);
+      assert.equal(request.headers()["content-type"], undefined);
+      assert.equal(request.postData(), null);
+    }
     assert.equal(await memberPage.locator("#profileName").textContent(), "team.user");
     assert.equal(await memberPage.locator("#adminSettingsNav").isVisible(), false);
     await memberPage.reload();
@@ -257,7 +274,7 @@ async function main() {
     assert.equal(await memberPage.locator("#appShell").isVisible(), false);
     assert.deepEqual(errors, []);
     await adminPage.screenshot({ path: "/tmp/pm-workbench-cloud-accounts.png", fullPage: true });
-    console.log("PASS: separate browser contexts share accounts, restore server sessions, enforce remote disabling, migrate original passwords and never fall back to local admin.");
+    console.log("PASS: separate browser contexts share accounts using a reachable fallback, credential-free health checks, server sessions, remote disabling, original password migration and no local admin fallback.");
   } finally {
     if (browser) await browser.close();
     if (server) await new Promise((resolve) => server.close(resolve));

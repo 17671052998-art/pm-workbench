@@ -45,6 +45,8 @@ pnpm exec wrangler secret bulk --config auth-service/wrangler.jsonc
 
 原浏览器中的管理员可通过「管理设置 → 迁移本机旧账号」上传原盐及 120,000 次迭代摘要，保持旧密码可用。迁移只新增，永不覆盖同名云端账号；完整成功后移除本机旧账号副本。旧账号保留较低的历史迭代次数，建议用强密码重新创建。自动化测试使用两份完全隔离的浏览器存储验证跨设备效果，以及迁移、撤销、权限、错误和不降级行为。
 
+`auth-gateway/` 提供 Cloudflare Pages 备用入口，通过服务绑定转发至同一个账号 Worker，不复制账号或密钥。客户端通过不携带凭据的健康检查选择可连接入口，连接失败后在下次操作时重新检测；创建、修改、删除账号不会自动重发。部署说明见该目录的 README。默认域名的可达性仍取决于成员所在网络，不能保证所有网络都能访问；两个入口均不可达时需要进一步排查或接入自有域名。
+
 参考：[Cloudflare D1](https://developers.cloudflare.com/d1/get-started/)、[OWASP 密码存储与 Pepper](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)。
 
 ## 功能
