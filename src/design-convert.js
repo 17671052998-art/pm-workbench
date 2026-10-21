@@ -1,5 +1,5 @@
 const designWorkerURL = new URL("./design-worker.js", document.currentScript.src);
-designWorkerURL.search = "v=native-design-1";
+designWorkerURL.search = "v=design-file-size-2";
 const formatNames = { fig: "Figma (.fig)", sketch: "Sketch (.sketch)", xd: "Adobe XD (.xd)" };
 
 export function renderDesignWorkspace() {
@@ -10,9 +10,9 @@ export function renderDesignWorkspace() {
         <div>
           <h3>1. 选择设计文件</h3>
           <input id="designFile" class="tool-file-input" type="file" accept=".fig,.sketch,.xd" aria-label="选择 XD、Sketch 或 Figma 文件" />
-          <button id="designDrop" class="tool-drop" type="button"><svg aria-hidden="true"><use href="#i-upload"></use></svg><strong>点击选择或拖入设计文件</strong><span>.fig / .sketch / .xd · 单个文件不超过 100 MB</span></button>
+          <button id="designDrop" class="tool-drop" type="button"><svg aria-hidden="true"><use href="#i-upload"></use></svg><strong>点击选择或拖入设计文件</strong><span>.fig / .sketch / .xd · 不再限制原文件大小</span></button>
           <div id="designSource" class="design-source" hidden><strong id="designFilename"></strong><p id="designSourceInfo" class="tool-hint"></p><div id="designPreviewBox" hidden><p class="tool-hint">原文件封面（非转换结果预览）</p><div class="design-preview"><img id="designPreview" alt="原设计文件的封面" /></div></div><button id="designReplace" class="btn secondary" type="button">更换文件</button></div>
-          <p class="tool-hint">文件在浏览器内处理，无需登录设计平台或安装插件。支持解压后不超过 400 MB、最多 50,000 个图层的文件。</p>
+          <p class="tool-hint">文件在浏览器内处理，无需登录设计平台或安装插件。大文件处理取决于电脑可用内存；为防止浏览器卡死，仍保留解压后 400 MB、50,000 个图层的安全保护。</p>
         </div>
         <div class="tool-settings">
           <h3>2. 转换与下载</h3>
@@ -74,7 +74,6 @@ export function mountDesignWorkspace(root, on) {
     setBusy(false);
     if (!/\.(fig|xd|sketch)$/i.test(file.name)) return setStatus("请选择 .fig、.sketch 或 .xd 文件。", true);
     if (!file.size) return setStatus("文件为空，请重新选择。", true);
-    if (file.size > 100 * 1024 * 1024) return setStatus("文件超过 100 MB，请拆分后转换。", true);
     const job = revision;
     setBusy(true); setStatus("正在读取设计文件…"); watch();
     try {

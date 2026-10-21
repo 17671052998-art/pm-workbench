@@ -1,4 +1,4 @@
-import { MAX_FILE, EMPTY_PNG, createReport, stats, targetReport } from "./common.mjs";
+import { EMPTY_PNG, createReport, stats, targetReport } from "./common.mjs";
 import { readFigma, writeFigma } from "./figma.mjs";
 import { readSketch, writeSketch } from "./sketch.mjs";
 import { readXD, writeXD } from "./xd.mjs";
@@ -9,7 +9,6 @@ export async function readDesign(bytes, filename) {
   const source = filename.split(".").at(-1).toLowerCase();
   if (!formats[source]) throw new Error("请选择 .fig、.sketch 或 .xd 文件。");
   if (!bytes.length) throw new Error("文件为空，请重新选择。");
-  if (bytes.length > MAX_FILE) throw new Error("文件超过 100 MB，请按页面拆分后转换。");
   const report = createReport();
   const result = await ({ fig: readFigma, sketch: readSketch, xd: readXD })[source](bytes, report);
   const thumbnail = result.thumbnail?.[0] === 0x89 ? result.thumbnail : EMPTY_PNG;

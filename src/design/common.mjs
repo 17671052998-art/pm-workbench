@@ -4,7 +4,6 @@ import { SceneGraph } from "@open-pencil/scene-graph";
 import { parseSVGPath } from "@open-pencil/scene-graph/parse-path";
 import { encodePathCommandsBlob } from "@open-pencil/fig/node-change";
 
-export const MAX_FILE = 100 * 1024 * 1024;
 export const MAX_EXPANDED = 400 * 1024 * 1024;
 export const MAX_NODES = 50000;
 export const encoder = strToU8;
@@ -21,7 +20,6 @@ export const solid = (value, opacity = 1) => ({ type: "SOLID", color: value, opa
 export const EMPTY_PNG = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="), (c) => c.charCodeAt(0));
 
 export function unpack(bytes) {
-  if (bytes.byteLength > MAX_FILE) throw new Error("文件超过 100 MB，请拆分后转换。");
   let expanded = 0;
   let entries = 0;
   return unzipSync(bytes, { filter(file) {

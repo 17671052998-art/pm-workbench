@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
+const os = require("node:os");
 const http = require("node:http");
 const { execFileSync } = require("node:child_process");
 const { zipSync, strToU8, unzipSync, strFromU8 } = require("fflate");
@@ -67,6 +68,12 @@ async function main() {
   const bombView = new DataView(bomb.buffer, bomb.byteOffset, bomb.byteLength);
   for (let i = 0; i < bomb.length - 46; i++) if (bombView.getUint32(i, true) === 0x02014b50) bombView.setUint32(i + 24, 500 * 1024 * 1024, true);
   assert.throws(() => unpack(bomb), /解压后/);
+  // A stored padding entry exercises a real >100 MB file without a huge scene graph.
+  const largeSource = zipSync({ ...unzipSync(source), "large-resource.bin": [new Uint8Array(100 * 1024 * 1024 + 1), { level: 0 }] });
+  assert.ok(largeSource.byteLength > 100 * 1024 * 1024);
+  const largeParsed = await readDesign(largeSource, "large.sketch");
+  assert.deepEqual(largeParsed.stats, parsed.stats);
+  assert.equal((await readDesign((await convertDesign(largeParsed, "fig")).bytes, "large.fig")).stats.text, 1);
   const sketchtool = "/Applications/Sketch.app/Contents/Resources/sketchtool/bin/sketchtool";
   try {
     await fs.access(sketchtool);
@@ -74,9 +81,10 @@ async function main() {
     assert.equal(JSON.parse(listed).pages[0].artboards[0].name, "Board");
     console.log("PASS: exported Sketch is accepted by native Sketch tooling.");
   } catch (error) { if (error.code !== "ENOENT") throw error; }
-  console.log("PASS: six native format directions retain editable text, groups, rectangles, cubic paths, image bytes and bounds; corrupt files, same-format requests and oversized archives are rejected.");
+  console.log("PASS: six native format directions retain editable content; >100 MB files convert while corrupt files, same-format requests and expanded archive bombs are rejected.");
 
   const project = path.resolve(__dirname, "..");
+  const largeDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "orbit-large-design-"));
   const server = http.createServer(async (request, response) => {
     try {
       const url = new URL(request.url, "http://localhost");
@@ -110,6 +118,7 @@ async function main() {
     await page.locator('[data-page="tools"]').click(); await page.locator("#designToolOpen").click();
     assert.equal(await page.locator("#designConvert").isDisabled(), true);
     assert.equal(await page.locator('#designWorkspace a[target="_blank"]').count(), 0);
+    assert.match(await page.locator("#designDrop").textContent(), /不再限制原文件大小/);
     await page.locator("#designFile").setInputFiles({ name: "sample.sketch", mimeType: "application/octet-stream", buffer: Buffer.from(source) });
     await page.waitForFunction(() => !document.querySelector("#designConvert").disabled);
     assert.match(await page.locator("#designSourceInfo").textContent(), /6 个图层 · 1 张图片/);
@@ -134,12 +143,26 @@ async function main() {
     await page.locator("#designTarget").selectOption("sketch");
     await page.locator("#designConvert").click();
     await page.locator("#designResult").waitFor({ state: "visible" });
+    const largeFilename = path.join(largeDirectory, "large.sketch");
+    await fs.writeFile(largeFilename, largeSource);
+    await page.locator("#designFile").setInputFiles(largeFilename);
+    await page.waitForFunction(() => !document.querySelector("#designConvert").disabled);
+    assert.match(await page.locator("#designSourceInfo").textContent(), /100\.0 MB.*6 个图层/);
+    await page.locator("#designTarget").selectOption("fig");
+    await page.locator("#designConvert").click();
+    await page.locator("#designResult").waitFor({ state: "visible" });
+    const largeDownloadEvent = page.waitForEvent("download");
+    await page.locator("#designDownload").click();
+    const largeDownload = await largeDownloadEvent;
+    assert.equal(largeDownload.suggestedFilename(), "large.fig");
+    const largeOutput = await readDesign(new Uint8Array(await fs.readFile(await largeDownload.path())), "large.fig");
+    assert.deepEqual(largeOutput.stats, parsed.stats);
     await page.locator("#designToolBack").click();
     assert.equal(await page.evaluate(() => document.activeElement.id), "designToolOpen");
     await page.locator('[data-page="dashboard"]').click();
     assert.equal(await page.locator("#designWorkspace").count(), 0);
     assert.deepEqual(uploads, []); assert.deepEqual(errors, []);
-    console.log("PASS: browser worker conversion, native downloads, format invalidation, corrupt-file recovery, navigation cleanup and no file uploads.");
-  } finally { await browser?.close(); await new Promise((resolve) => server.close(resolve)); }
+    console.log("PASS: browser worker conversion and downloads including >100 MB input, format invalidation, corrupt-file recovery, navigation cleanup and no file uploads.");
+  } finally { await browser?.close(); await new Promise((resolve) => server.close(resolve)); await fs.rm(largeDirectory, { recursive: true, force: true }); }
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });
