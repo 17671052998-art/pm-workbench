@@ -74,24 +74,8 @@ async function main() {
     assert.match(await page.locator("#toolCatalog").textContent(), /3 个工具/);
     await page.locator("#designToolOpen").click();
     assert.equal(await page.locator("#designWorkspace").isVisible(), true);
-    assert.match(await page.locator("#designWorkspace").textContent(), /不会读取、上传或直接生成/);
-    await page.screenshot({ path: "/tmp/pm-workbench-design-convert.png", fullPage: true });
-    const designFlows = [
-      ["sketch-figma", "Sketch 转 Figma", "https://www.figma.com/files/", "help.figma.com"],
-      ["xd-figma", "XD 转 Figma", "849159306117999028", "docs.hypermatic.com/convertify/import/adobe-xd"],
-      ["figma-sketch", "Figma 转 Sketch", "849159306117999028", "docs.hypermatic.com/convertify/export/sketch"],
-      ["figma-xd", "Figma 转 XD", "849159306117999028", "docs.hypermatic.com/convertify/export/adobe-xd"],
-    ];
-    for (const [key, title, launch, docs] of designFlows) {
-      await page.locator(`[data-design-flow="${key}"]`).click();
-      assert.equal(await page.locator(`[data-design-flow="${key}"]`).getAttribute("aria-pressed"), "true");
-      assert.equal(await page.locator("#designFlowTitle").textContent(), title);
-      assert.equal(await page.locator("#designFlowSteps li").count(), 3);
-      assert.ok((await page.locator("#designFlowLaunch").getAttribute("href")).includes(launch));
-      assert.ok((await page.locator("#designFlowDocs").getAttribute("href")).includes(docs));
-    }
-    assert.equal(await page.locator("#designFlowLaunch").getAttribute("target"), "_blank");
-    assert.equal(await page.locator("#designFlowLaunch").getAttribute("rel"), "noopener noreferrer");
+    assert.equal(await page.locator("#designFile").count(), 1);
+    assert.equal(await page.locator("#designConvert").isDisabled(), true);
     await page.locator("#designToolBack").click();
     assert.equal(await page.locator("#toolCatalog").isVisible(), true);
     assert.equal(await page.evaluate(() => document.activeElement.id), "designToolOpen");

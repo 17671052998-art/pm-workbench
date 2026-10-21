@@ -7,7 +7,7 @@ let cleanup = () => {};
 
 function render() {
   return `
-    <header class="page-head"><div><h1 class="page-title">工具箱</h1><p class="page-subtitle">处理产品工作中的常用素材与设计文件，减少重复操作。</p></div><span class="badge green">按工具说明操作</span></header>
+    <header class="page-head"><div><h1 class="page-title">工具箱</h1><p class="page-subtitle">处理产品工作中的常用素材与设计文件，减少重复操作。</p></div><span class="badge green">本地处理 · 无需上传</span></header>
     <section id="toolCatalog" class="tool-catalog" aria-labelledby="toolCatalogTitle">
       <div class="tool-catalog-head"><div><h2 id="toolCatalogTitle">常用工具</h2><p>选择工具后进入操作页面</p></div><span>3 个工具</span></div>
       <div class="tool-catalog-grid">
@@ -57,7 +57,7 @@ function render() {
             <rect x="250" y="45" width="48" height="70" rx="13" fill="#fff"/><path d="M262 66h24l-9 28h-6z" fill="#f7b45c"/>
           </svg>
         </span>
-        <span class="tool-card-content"><span class="tool-card-title">设计文件互转</span><span class="tool-card-description">Sketch、XD 与 Figma 的原生文件转换入口和操作步骤</span><span class="tool-card-meta"><span class="badge">Figma 内完成</span><span>进入工具 <b aria-hidden="true">→</b></span></span></span>
+        <span class="tool-card-content"><span class="tool-card-title">设计文件互转</span><span class="tool-card-description">在浏览器内转换 XD、Sketch 和 Figma 文件，直接下载</span><span class="tool-card-meta"><span class="badge">本地转换 · 测试版</span><span>进入工具 <b aria-hidden="true">→</b></span></span></span>
       </button>
       </div>
     </section>
@@ -173,7 +173,7 @@ function mount(root) {
   let busy = false;
   let converterOpen = false;
   const disposeBackground = mountBackgroundTool(root, on);
-  mountDesignWorkspace(root, on);
+  const disposeDesign = mountDesignWorkspace(root, on);
   root.dataset.previewBackground = "black";
   const formatSize = (bytes) => bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 / 1024).toFixed(2)} MB`;
   const status = (text, error = false) => {
@@ -416,6 +416,7 @@ function mount(root) {
   cleanup = () => {
     disposed = true;
     disposeBackground();
+    disposeDesign();
     stopWorker();
     controller.abort();
     if (previewURL) URL.revokeObjectURL(previewURL);

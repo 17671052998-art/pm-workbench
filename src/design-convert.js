@@ -1,110 +1,126 @@
-const FIGMA_FILES = "https://www.figma.com/files/";
-const CONVERTIFY = "https://www.figma.com/community/plugin/849159306117999028/convertify-sketch-adobe-google";
-
-const flows = {
-  "sketch-figma": {
-    title: "Sketch 转 Figma",
-    tag: "Figma 官方导入",
-    description: "将 .sketch 文件导入 Figma，生成可编辑的 Figma Design 文件。",
-    steps: [
-      "在 Figma 文件页登录账号，点击“创建” > “导入” > “从计算机”。",
-      "选择本机 .sketch 文件，等待 Figma 完成转换。",
-      "打开导入结果，检查字体、组件和样式；需要本地 .fig 文件时再从 Figma 保存本地副本。",
-    ],
-    launch: FIGMA_FILES,
-    launchLabel: "打开 Figma 导入",
-    docs: "https://help.figma.com/hc/en-us/articles/360040514273-Import-Sketch-files",
-    note: "Figma 官方导入不保留 Sketch 样式；缺失字体、组件关联等可能需要手动修正。",
-  },
-  "xd-figma": {
-    title: "XD 转 Figma",
-    tag: "Figma 插件转换",
-    description: "通过 Convertify 插件将 .xd 文件导入可编辑的 Figma 设计稿。",
-    steps: [
-      "在 Figma 中打开或新建一个有编辑权限的设计文件，并安装、运行 Convertify。",
-      "选择“Import into Figma” > “Import Adobe XD to Figma”。",
-      "把本机 .xd 文件拖入插件，完成后检查图层、字体和交互效果。",
-    ],
-    launch: CONVERTIFY,
-    launchLabel: "打开 Convertify 插件",
-    docs: "https://docs.hypermatic.com/convertify/import/adobe-xd",
-    note: "此方向依赖第三方 Figma 插件。插件试用次数和后续收费以开发者页面为准。",
-  },
-  "figma-sketch": {
-    title: "Figma 转 Sketch",
-    tag: "Figma 插件转换",
-    description: "从 Figma 页面或选定画框导出可在 Sketch 中打开的 .sketch 文件。",
-    steps: [
-      "打开有编辑权限的 Figma 设计文件，安装并运行 Convertify。",
-      "选择“Export from Figma” > “Export Figma to Sketch”，选定页面或画框。",
-      "点击导出并下载 .sketch 文件，在 Sketch 中检查组件、字体和布局。",
-    ],
-    launch: CONVERTIFY,
-    launchLabel: "打开 Convertify 插件",
-    docs: "https://docs.hypermatic.com/convertify/export/sketch",
-    note: "此方向依赖第三方 Figma 插件；部分 Figma 特性在 Sketch 中没有对应能力。",
-  },
-  "figma-xd": {
-    title: "Figma 转 XD",
-    tag: "Figma 插件转换",
-    description: "从 Figma 单个页面或选定画框导出可在 Adobe XD 中打开的 .xd 文件。",
-    steps: [
-      "打开有编辑权限的 Figma 设计文件，安装并运行 Convertify。",
-      "选择“Export from Figma” > “Export Figma to Adobe XD”，选定单个页面或画框。",
-      "点击导出并下载 .xd 文件，在 Adobe XD 中检查图层、字体和原型链接。",
-    ],
-    launch: CONVERTIFY,
-    launchLabel: "打开 Convertify 插件",
-    docs: "https://docs.hypermatic.com/convertify/export/adobe-xd",
-    note: "Adobe XD 文件只支持单页；部分 Figma 图层属性和交互无法完整保留。此方向依赖第三方插件。",
-  },
-};
+const designWorkerURL = new URL("./design-worker.js", document.currentScript.src);
+designWorkerURL.search = "v=native-design-1";
+const formatNames = { fig: "Figma (.fig)", sketch: "Sketch (.sketch)", xd: "Adobe XD (.xd)" };
 
 export function renderDesignWorkspace() {
   return `
     <section id="designWorkspace" class="panel tool-workspace design-workspace" aria-labelledby="designTitle" hidden>
-      <header class="panel-head"><div class="tool-workspace-title"><button id="designToolBack" class="tool-back" type="button" aria-label="返回工具箱">←</button><div><h2 id="designTitle" tabindex="-1">设计文件互转</h2><p>在 Figma 中完成 Sketch、XD 与 Figma 的原生文件转换。</p></div></div><span class="doc-tag">设计文件</span></header>
-      <div class="design-content">
-        <p class="design-intro">选择转换方向，按步骤前往 Figma 操作。当前工作台不会读取、上传或直接生成这些设计文件；转换发生在 Figma 或其插件内。</p>
-        <div class="design-flow-grid" role="group" aria-label="选择设计文件转换方向">
-          <button type="button" data-design-flow="sketch-figma" aria-pressed="true"><strong>Sketch → Figma</strong><span>官方导入</span></button>
-          <button type="button" data-design-flow="xd-figma" aria-pressed="false"><strong>XD → Figma</strong><span>插件导入</span></button>
-          <button type="button" data-design-flow="figma-sketch" aria-pressed="false"><strong>Figma → Sketch</strong><span>插件导出</span></button>
-          <button type="button" data-design-flow="figma-xd" aria-pressed="false"><strong>Figma → XD</strong><span>插件导出</span></button>
+      <header class="panel-head"><div class="tool-workspace-title"><button id="designToolBack" class="tool-back" type="button" aria-label="返回工具箱">←</button><div><h2 id="designTitle" tabindex="-1">设计文件互转</h2><p>选择 XD、Sketch 或 Figma 源文件，转换并下载。</p></div></div><span class="doc-tag">本地转换 · 测试版</span></header>
+      <div class="tool-columns design-columns">
+        <div>
+          <h3>1. 选择设计文件</h3>
+          <input id="designFile" class="tool-file-input" type="file" accept=".fig,.sketch,.xd" aria-label="选择 XD、Sketch 或 Figma 文件" />
+          <button id="designDrop" class="tool-drop" type="button"><svg aria-hidden="true"><use href="#i-upload"></use></svg><strong>点击选择或拖入设计文件</strong><span>.fig / .sketch / .xd · 单个文件不超过 100 MB</span></button>
+          <div id="designSource" class="design-source" hidden><strong id="designFilename"></strong><p id="designSourceInfo" class="tool-hint"></p><div id="designPreviewBox" hidden><p class="tool-hint">原文件封面（非转换结果预览）</p><div class="design-preview"><img id="designPreview" alt="原设计文件的封面" /></div></div><button id="designReplace" class="btn secondary" type="button">更换文件</button></div>
+          <p class="tool-hint">文件在浏览器内处理，无需登录设计平台或安装插件。支持解压后不超过 400 MB、最多 50,000 个图层的文件。</p>
         </div>
-        <div class="design-flow-detail">
-          <span id="designFlowTag" class="badge green"></span>
-          <h3 id="designFlowTitle"></h3>
-          <p id="designFlowDescription"></p>
-          <ol id="designFlowSteps"></ol>
-          <div class="design-flow-actions"><a id="designFlowLaunch" class="btn primary" target="_blank" rel="noopener noreferrer"></a><a id="designFlowDocs" class="btn secondary" target="_blank" rel="noopener noreferrer">查看详细教程</a></div>
-          <p id="designFlowNote" class="design-flow-note"></p>
+        <div class="tool-settings">
+          <h3>2. 转换与下载</h3>
+          <label class="form-label" for="designTarget">目标格式<select id="designTarget"><option value="fig">Figma (.fig)</option><option value="sketch">Sketch (.sketch)</option><option value="xd">Adobe XD (.xd)</option></select></label>
+          <p class="tool-output-hint">保留可编辑的画板、分组、基础形状、矢量路径、文字和图片。转换后会列出需要检查的兼容性问题。</p>
+          <div class="tool-actions"><button id="designConvert" class="btn primary" type="button" disabled>开始转换</button><button id="designCancel" class="btn secondary" type="button" hidden>取消处理</button></div>
+          <p id="designStatus" class="tool-status" role="status" aria-live="polite">请先选择设计文件。</p>
+          <div id="designResult" class="tool-result" hidden><strong>设计文件已生成</strong><p id="designResultInfo"></p><a id="designDownload" class="btn primary">下载设计文件</a><p class="tool-hint">请在目标软件中打开结果，检查字体、位置与复杂效果。</p></div>
+          <section id="designReport" class="design-report" aria-labelledby="designReportTitle" hidden><h4 id="designReportTitle">转换提示</h4><ul id="designIssues"></ul><p id="designNoIssues" hidden>当前文件未检测到已知的格式简化项。</p></section>
         </div>
       </div>
-      <div class="tool-notes"><strong>转换前请留意</strong><p>跨工具转换无法保证像素级或功能级完全一致，重要文件请保留原稿并逐页检查。Convertify 是第三方插件，可能有试用限制或收费；请在其页面确认最新条款。</p></div>
+      <div class="tool-notes"><strong>当前支持范围</strong><p>此版本转换静态设计图层。组件可能展开为普通分组；自动布局按当前固定位置转换；原型交互、组件状态和变量关联不保留。复杂布尔运算、蒙版、文字排版与特效需要在目标软件中复核。</p><p>字体文件不会随设计稿嵌入，目标软件需要安装原稿使用的字体。离开工具箱或退出登录会清除本次文件。</p></div>
     </section>`;
 }
 
 export function mountDesignWorkspace(root, on) {
-  const buttons = [...root.querySelectorAll("[data-design-flow]")];
-  function selectFlow(key) {
-    const flow = flows[key];
-    if (!flow) return;
-    buttons.forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.designFlow === key)));
-    root.querySelector("#designFlowTag").textContent = flow.tag;
-    root.querySelector("#designFlowTitle").textContent = flow.title;
-    root.querySelector("#designFlowDescription").textContent = flow.description;
-    root.querySelector("#designFlowSteps").replaceChildren(...flow.steps.map((step) => {
+  const $ = (id) => root.querySelector(`#${id}`);
+  let worker = null, ready = false, busy = false, revision = 0, disposed = false;
+  let resultURL = null, previewURL = null, timer = null, file = null;
+  const size = (bytes) => bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${(bytes / 1024).toFixed(1)} KB`;
+  const setStatus = (message, error = false) => { $("designStatus").textContent = message; $("designStatus").classList.toggle("is-error", error); };
+  function setBusy(value) {
+    busy = value;
+    ["designFile", "designDrop", "designReplace", "designTarget"].forEach((id) => { $(id).disabled = value; });
+    $("designConvert").disabled = value || !ready;
+    $("designConvert").textContent = value ? "处理中…" : "开始转换";
+    $("designCancel").hidden = !value;
+  }
+  function clearResult() {
+    if (resultURL) URL.revokeObjectURL(resultURL);
+    resultURL = null;
+    $("designDownload").removeAttribute("href");
+    $("designResult").hidden = true;
+    $("designReport").hidden = true;
+  }
+  function stop() { worker?.terminate(); worker = null; clearTimeout(timer); revision++; }
+  function fail(message) { stop(); ready = false; setBusy(false); setStatus(message, true); }
+  function watch() { clearTimeout(timer); timer = setTimeout(() => fail("处理时间过长，请按页面拆分文件后重试。"), 120000); }
+  function showIssues(issues) {
+    $("designIssues").replaceChildren(...issues.map((issue) => {
       const item = document.createElement("li");
-      item.textContent = step;
+      item.textContent = `${issue.message}（${issue.count} 项）${issue.examples.length ? ` 例如：${issue.examples.join("、")}` : ""}`;
       return item;
     }));
-    const launch = root.querySelector("#designFlowLaunch");
-    launch.href = flow.launch;
-    launch.textContent = flow.launchLabel;
-    root.querySelector("#designFlowDocs").href = flow.docs;
-    root.querySelector("#designFlowNote").textContent = flow.note;
+    $("designNoIssues").hidden = issues.length > 0;
+    $("designReport").hidden = false;
   }
-  buttons.forEach((button) => on(button, "click", () => selectFlow(button.dataset.designFlow)));
-  selectFlow("sketch-figma");
+  async function choose(nextFile) {
+    if (!nextFile || busy) return;
+    stop(); clearResult(); ready = false;
+    file = nextFile;
+    $("designFile").value = "";
+    if (previewURL) URL.revokeObjectURL(previewURL);
+    previewURL = null;
+    $("designPreview").removeAttribute("src");
+    $("designPreviewBox").hidden = true;
+    $("designSource").hidden = true;
+    $("designDrop").hidden = false;
+    setBusy(false);
+    if (!/\.(fig|xd|sketch)$/i.test(file.name)) return setStatus("请选择 .fig、.sketch 或 .xd 文件。", true);
+    if (!file.size) return setStatus("文件为空，请重新选择。", true);
+    if (file.size > 100 * 1024 * 1024) return setStatus("文件超过 100 MB，请拆分后转换。", true);
+    const job = revision;
+    setBusy(true); setStatus("正在读取设计文件…"); watch();
+    try {
+      const buffer = await file.arrayBuffer();
+      if (disposed || job !== revision) return;
+      worker = new Worker(designWorkerURL);
+      worker.onerror = (event) => { event.preventDefault(); fail("转换器加载失败，请刷新页面后重试。"); };
+      worker.onmessage = ({ data }) => {
+        if (disposed || job !== revision) return;
+        if (data.type === "progress") { watch(); setStatus(data.message); }
+        else if (data.type === "error") fail(`无法处理：${data.message}`);
+        else if (data.type === "ready") {
+          clearTimeout(timer); ready = true; setBusy(false);
+          $("designFilename").textContent = file.name;
+          $("designSourceInfo").textContent = `${formatNames[data.source]} · ${size(file.size)} · ${data.stats.pages} 页 · ${data.stats.layers} 个图层 · ${data.stats.images} 张图片`;
+          for (const option of $("designTarget").options) option.disabled = option.value === data.source;
+          if ($("designTarget").value === data.source) $("designTarget").value = data.source === "fig" ? "sketch" : "fig";
+          if (data.preview.length > 100) {
+            previewURL = URL.createObjectURL(new Blob([data.preview], { type: "image/png" }));
+            $("designPreview").src = previewURL; $("designPreviewBox").hidden = false;
+          }
+          $("designSource").hidden = false; $("designDrop").hidden = true;
+          showIssues(data.issues);
+          setStatus("文件已就绪，选择目标格式后开始转换。");
+        } else if (data.type === "done") {
+          clearTimeout(timer); setBusy(false);
+          const blob = new Blob([data.bytes], { type: "application/octet-stream" });
+          resultURL = URL.createObjectURL(blob);
+          const link = $("designDownload"); link.href = resultURL; link.download = data.filename; link.textContent = `下载 ${formatNames[data.target]}`;
+          $("designResultInfo").textContent = `${data.filename} · ${size(blob.size)} · ${data.stats.layers} 个源图层`;
+          $("designResult").hidden = false;
+          showIssues(data.issues);
+          setStatus(data.issues.length ? "转换完成，请查看下方转换提示。" : "转换完成，可以下载设计文件。");
+        }
+      };
+      worker.postMessage({ type: "read", buffer, filename: file.name }, [buffer]);
+    } catch { if (!disposed && job === revision) fail("无法读取文件，请重新选择。"); }
+  }
+  on($("designDrop"), "click", () => $("designFile").click());
+  on($("designReplace"), "click", () => $("designFile").click());
+  on($("designFile"), "change", (event) => choose(event.target.files[0]));
+  on($("designWorkspace"), "dragover", (event) => { event.preventDefault(); if (!busy) $("designDrop").classList.add("is-dragging"); });
+  on($("designWorkspace"), "dragleave", (event) => { if (!$("designWorkspace").contains(event.relatedTarget)) $("designDrop").classList.remove("is-dragging"); });
+  on($("designWorkspace"), "drop", (event) => { event.preventDefault(); $("designDrop").classList.remove("is-dragging"); if (!busy) { if (event.dataTransfer.files.length !== 1) return setStatus("每次请选择一个设计文件。", true); choose(event.dataTransfer.files[0]); } });
+  on($("designTarget"), "change", () => { clearResult(); setStatus(ready ? "目标格式已更新，请开始转换。" : "请先选择设计文件。"); });
+  on($("designConvert"), "click", () => { if (!ready || busy || !worker) return; clearResult(); setBusy(true); watch(); worker.postMessage({ type: "convert", target: $("designTarget").value }); });
+  on($("designCancel"), "click", () => { stop(); ready = false; setBusy(false); setStatus("已取消处理，请重新选择文件。"); });
+  return () => { disposed = true; stop(); clearResult(); if (previewURL) URL.revokeObjectURL(previewURL); file = null; };
 }

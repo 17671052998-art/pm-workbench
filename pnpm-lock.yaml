@@ -8,6 +8,18 @@ importers:
 
   .:
     dependencies:
+      '@open-pencil/fig':
+        specifier: 0.16.0
+        version: 0.16.0(@open-pencil/kiwi@0.16.0)(@open-pencil/scene-graph@0.16.0)
+      '@open-pencil/kiwi':
+        specifier: 0.16.0
+        version: 0.16.0
+      '@open-pencil/scene-graph':
+        specifier: 0.16.0
+        version: 0.16.0
+      fflate:
+        specifier: 0.8.3
+        version: 0.8.3
       gifenc:
         specifier: 1.0.3
         version: 1.0.3
@@ -20,6 +32,9 @@ importers:
       protobufjs:
         specifier: 8.8.0
         version: 8.8.0
+      svgpath:
+        specifier: 2.6.0
+        version: 2.6.0
     devDependencies:
       esbuild:
         specifier: 0.28.2
@@ -189,15 +204,44 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@noble/hashes@2.4.0':
+    resolution: {integrity: sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==}
+    engines: {node: '>= 20.19.0'}
+
+  '@open-pencil/fig@0.16.0':
+    resolution: {integrity: sha512-uj9eQoYwXVCJ78c8mzgbo/1qcC2bBeIHeVbwJAl2/A685moSKxOCBz9VssbRzpitb6mUegCQG6SLyvGbsJT8Jg==}
+    peerDependencies:
+      '@open-pencil/kiwi': ^0.16.0
+      '@open-pencil/scene-graph': ^0.16.0
+
+  '@open-pencil/kiwi@0.16.0':
+    resolution: {integrity: sha512-6wyEY0pyy8X2j2iGgs8d+gjhsdd+p6IYmtZb463lHaczOZV+dDLr0yaOzTtwMKvpoHhLzXKWQaye4l6Q5eKgVA==}
+
+  '@open-pencil/scene-graph@0.16.0':
+    resolution: {integrity: sha512-o7mRz8tXyRO6fgizBUSqJJhKI4b1uzWMCw3o/reJZAWq+m6lDlzgxGvR4xhCWurl70eDQcDTRyGr8aVHcAe5jg==}
+
+  culori@4.0.2:
+    resolution: {integrity: sha512-1+BhOB8ahCn4O0cep0Sh2l9KCOfOdY+BXJnKMHFFzDEouSr/el18QwXEMRlOj9UY5nCeA8UN3a/82rUWRBeyBw==}
+    engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
+
+  es-toolkit@1.52.0:
+    resolution: {integrity: sha512-XTNEJQh1tY1ZJVcf6ayP/2n4ZPyaHlW2FWs7xvw5ddPuhUVjLD3olQVQS7kf58JbAB48iL0uL/jerTrjtV3lDA==}
+
   esbuild@0.28.2:
     resolution: {integrity: sha512-HKVLS8dvII+xoKW9kmqxbRKrnWEXfJJr/FZhhJmiqIB0e053QNYFqOBouTMO/k5sID4MvCiUCvv8b9M4h32wIA==}
     engines: {node: '>=18'}
     hasBin: true
 
+  fflate@0.8.3:
+    resolution: {integrity: sha512-tbZNuJrLwGUp3zshBtdy4W+ORxZuIh8a5ilyIEQDC5rY1f3U20JMry0Ll3WBzU58EZKsEuJFXhb5gwv8CsPvgA==}
+
   fsevents@2.3.2:
     resolution: {integrity: sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA==}
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
+
+  fzstd@0.1.1:
+    resolution: {integrity: sha512-dkuVSOKKwh3eas5VkJy1AW1vFpet8TA/fGmVA5krThl8YcOVE/8ZIoEA1+U1vEn5ckxxhLirSdY837azmbaNHA==}
 
   gifenc@1.0.3:
     resolution: {integrity: sha512-xdr6AdrfGBcfzncONUOlXMBuc5wJDtOueE3c5rdG0oNgtINLD+f2iFZltrBRZYzACRbKr+mSVU/x98zv2u3jmw==}
@@ -205,11 +249,18 @@ packages:
   gifuct-js@2.1.2:
     resolution: {integrity: sha512-rI2asw77u0mGgwhV3qA+OEgYqaDn5UNqgs+Bx0FGwSpuqfYn+Ir6RQY5ENNQ8SbIiG/m5gVa7CD5RriO4f4Lsg==}
 
+  js-base64@3.9.4:
+    resolution: {integrity: sha512-PtOMXpEGuP0RRiRXsjzHzl44dMHxSu2CPvAhinupR1tBa88me+1DPqsobl7eupn5UukjLkln1ZnAOAOXOrYG0Q==}
+
   js-binary-schema-parser@2.0.3:
     resolution: {integrity: sha512-xezGJmOb4lk/M1ZZLTR/jaBHQ4gG/lqQnJqdIv4721DMggsa1bDVlHXNeHYogaIEHD9vCRv0fcL4hMA+Coarkg==}
 
   long@5.3.2:
     resolution: {integrity: sha512-mNAgZ1GmyNhD7AuqnTG3/VQ26o760+ZYBPKjPvugO8+nLbYfX6TVpJPseBvopbdY+qpZ/lKUnmEc1LeZYS3QAA==}
+
+  nanoevents@9.1.0:
+    resolution: {integrity: sha512-Jd0fILWG44a9luj8v5kED4WI+zfkkgwKyRQKItTtlPfEsh7Lznfi1kr8/iZ+XAIss4Qq5GqRB0qtWbaz9ceO/A==}
+    engines: {node: ^18.0.0 || >=20.0.0}
 
   pako@3.0.1:
     resolution: {integrity: sha512-GupotUUI0mlhugKjUs4bjOwLt3nrehy9Ys2dxC0GtgVef5cnKggkDMmf2bq2poCCuVXopWPmqsc9VDT2iJUy+w==}
@@ -224,12 +275,26 @@ packages:
     engines: {node: '>=20'}
     hasBin: true
 
+  postcss-value-parser@4.2.0:
+    resolution: {integrity: sha512-1NNCs6uurfkVbeXG4S8JFT9t19m45ICnif8zWLd5oPSZ50QnwMfK+H3jv408d4jw/7Bttv5axS5IiHoLaVNHeQ==}
+
   protobufjs@8.8.0:
     resolution: {integrity: sha512-N3xhQ5yyBx3vQq4gubBfASzYhJGNzeDbjqBpu61g7UVylsN/qyffU96TKWD3GbbLOKF82VGNRNvv1+BFgE31Eg==}
     engines: {node: '>=12.0.0'}
 
   svgaplayerweb@2.3.2:
     resolution: {integrity: sha512-QuTvNIgy3W6Mi4h74SczEHUtAwb8m3ax7Ai7xRLUuN6hjJh49RGtWOWq1IuF2I7ECcl0HAYn8FcTn99UDz9UiQ==}
+
+  svgpath@2.6.0:
+    resolution: {integrity: sha512-OIWR6bKzXvdXYyO4DK/UWa1VA1JeKq8E+0ug2DG98Y/vOmMpfZNj+TIG988HjfYSqtcy/hFOtZq/n/j5GSESNg==}
+
+  valibot@1.5.0:
+    resolution: {integrity: sha512-nil6AkP2TChWL43Z5uJ6GTxX01CUA+g8LWUM+N/rB9NBbkUMaUsi9PUNzlUPgoKASgmx9f7eGOYpJ04/fSa6FQ==}
+    peerDependencies:
+      typescript: '>=5'
+    peerDependenciesMeta:
+      typescript:
+        optional: true
 
 snapshots:
 
@@ -311,6 +376,40 @@ snapshots:
   '@esbuild/win32-x64@0.28.2':
     optional: true
 
+  '@noble/hashes@2.4.0': {}
+
+  '@open-pencil/fig@0.16.0(@open-pencil/kiwi@0.16.0)(@open-pencil/scene-graph@0.16.0)':
+    dependencies:
+      '@open-pencil/kiwi': 0.16.0
+      '@open-pencil/scene-graph': 0.16.0
+      es-toolkit: 1.52.0
+      fflate: 0.8.3
+      js-base64: 3.9.4
+      valibot: 1.5.0
+    transitivePeerDependencies:
+      - typescript
+
+  '@open-pencil/kiwi@0.16.0':
+    dependencies:
+      fflate: 0.8.3
+      fzstd: 0.1.1
+
+  '@open-pencil/scene-graph@0.16.0':
+    dependencies:
+      '@noble/hashes': 2.4.0
+      culori: 4.0.2
+      es-toolkit: 1.52.0
+      nanoevents: 9.1.0
+      postcss-value-parser: 4.2.0
+      svgpath: 2.6.0
+      valibot: 1.5.0
+    transitivePeerDependencies:
+      - typescript
+
+  culori@4.0.2: {}
+
+  es-toolkit@1.52.0: {}
+
   esbuild@0.28.2:
     optionalDependencies:
       '@esbuild/aix-ppc64': 0.28.2
@@ -340,8 +439,12 @@ snapshots:
       '@esbuild/win32-ia32': 0.28.2
       '@esbuild/win32-x64': 0.28.2
 
+  fflate@0.8.3: {}
+
   fsevents@2.3.2:
     optional: true
+
+  fzstd@0.1.1: {}
 
   gifenc@1.0.3: {}
 
@@ -349,9 +452,13 @@ snapshots:
     dependencies:
       js-binary-schema-parser: 2.0.3
 
+  js-base64@3.9.4: {}
+
   js-binary-schema-parser@2.0.3: {}
 
   long@5.3.2: {}
+
+  nanoevents@9.1.0: {}
 
   pako@3.0.1: {}
 
@@ -363,8 +470,14 @@ snapshots:
     optionalDependencies:
       fsevents: 2.3.2
 
+  postcss-value-parser@4.2.0: {}
+
   protobufjs@8.8.0:
     dependencies:
       long: 5.3.2
 
   svgaplayerweb@2.3.2: {}
+
+  svgpath@2.6.0: {}
+
+  valibot@1.5.0: {}
