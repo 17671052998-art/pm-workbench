@@ -151,7 +151,30 @@ export function xdImageTransform(node, fill, size) {
   return { a: node.width * m.m11 / det / size.width, b: -node.height * m.m10 / det / size.width, c: -node.width * m.m01 / det / size.height, d: node.height * m.m00 / det / size.height, tx: node.width * (m.m01 * m.m12 - m.m11 * m.m02) / det, ty: node.height * (m.m10 * m.m02 - m.m00 * m.m12) / det };
 }
 
+export function xdResponsivePair(graph, node) {
+  if (node.type !== "FRAME" || !["HORIZONTAL", "VERTICAL"].includes(node.layoutMode) || node.layoutWrap !== "NO_WRAP" || node.primaryAxisAlign !== "SPACE_BETWEEN" || node.counterAxisAlign !== "CENTER" || node.primaryAxisSizing !== "FIXED" || node.counterAxisSizing !== "FIXED") return null;
+  if (node.clipsContent || node.fills.length || node.strokes.length || node.effects.length || node.rotation || node.flipX || node.flipY || [node.paddingTop, node.paddingRight, node.paddingBottom, node.paddingLeft].some(Boolean)) return null;
+  const children = graph.getChildren(node.id);
+  if (children.length !== 2 || children.some((child) => !child.visible || child.isMask || child.rotation || child.flipX || child.flipY || child.layoutGrow || child.layoutAlignSelf !== "AUTO" || child.layoutPositioning !== "AUTO")) return null;
+  const horizontal = node.layoutMode === "HORIZONTAL", position = horizontal ? "x" : "y", size = horizontal ? "width" : "height", cross = horizontal ? "y" : "x", crossSize = horizontal ? "height" : "width";
+  const near = (a, b) => Math.abs(a - b) < 0.01;
+  if (!near(children[0][position], 0) || !near(children[1][position] + children[1][size], node[size]) || children.some((child) => !near(child[cross] + child[crossSize] / 2, node[crossSize] / 2))) return null;
+  return { horizontal, children };
+}
+
+export function xdStandaloneComponent(graph, node) {
+  if (node.type !== "COMPONENT" || graph.getNode(node.parentId)?.type !== "CANVAS" || node.componentPropertyDefinitions?.length) return false;
+  for (const candidate of graph.nodes.values()) if (candidate.type === "INSTANCE" && candidate.componentId === node.id) return false;
+  function supported(current) {
+    if (current !== node && ["COMPONENT", "COMPONENT_SET", "INSTANCE"].includes(current.type)) return false;
+    if (current.isMask || current.layoutMode !== "NONE" || current.effects.length) return false;
+    return graph.getChildren(current.id).every(supported);
+  }
+  return supported(node);
+}
+
 export function xdMaskSupported(graph, node, mode = node.maskType) {
+  if (xdVectorMaskPlan(graph, node, mode)) return true;
   if (!node.visible || node.opacity !== 1 || node.effects.some((effect) => effect.visible)) return false;
   if (node.fills.length > 1 || node.strokes.length > 1 || [...node.fills, ...node.strokes].some((paint) => !paint.visible || paint.opacity !== 1 || paint.blendMode && !["NORMAL", "PASS_THROUGH"].includes(paint.blendMode))) return false;
   if (["GROUP", "FRAME"].includes(node.type)) return false;
@@ -164,6 +187,32 @@ export function xdMaskSupported(graph, node, mode = node.maskType) {
     const colors = fill.type === "SOLID" ? [fill.color] : fill.type.startsWith("GRADIENT") ? (fill.gradientStops || []).map((stop) => stop.color) : [];
     return fill.opacity === 1 && colors.length > 0 && colors.every((c) => c.a === 1 && (mode !== "LUMINANCE" || c.r === 1 && c.g === 1 && c.b === 1));
   });
+}
+
+export function xdVectorMaskPlan(graph, root, mode = root.maskType) {
+  if (!["ALPHA", "LUMINANCE"].includes(mode) || !root.visible) return null;
+  const paints = [];
+  function visit(node, matrix) {
+    if (!node.visible) return true;
+    if (node.opacity !== 1 || node.effects.some((effect) => effect.visible) || node.isMask && node !== root) return false;
+    if (!["NORMAL", "PASS_THROUGH"].includes(node.blendMode)) return false;
+    const own = node === root ? { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 } : xdMatrix(node);
+    const t = { a: matrix.a * own.a + matrix.c * own.b, b: matrix.b * own.a + matrix.d * own.b, c: matrix.a * own.c + matrix.c * own.d, d: matrix.b * own.c + matrix.d * own.d, tx: matrix.a * own.tx + matrix.c * own.ty + matrix.tx, ty: matrix.b * own.tx + matrix.d * own.ty + matrix.ty };
+    if (node.type === "GROUP") return !node.fills.length && !node.strokes.length && graph.getChildren(node.id).every((child) => visit(child, t));
+    if (!["VECTOR", "RECTANGLE", "ROUNDED_RECTANGLE", "ELLIPSE", "LINE", "STAR", "POLYGON"].includes(node.type)) return false;
+    if (node.type === "VECTOR" && (!nodePath(node) || node.fillGeometry.some((geometry) => geometry.windingRule !== (node.fillGeometry[0]?.windingRule || "NONZERO")))) return false;
+    for (const [stroke, list] of [[false, node.fills], [true, node.strokes]]) for (const fill of list.filter((fill) => fill.visible)) {
+      if (fill.opacity !== 1 || fill.blendMode && !["NORMAL", "PASS_THROUGH"].includes(fill.blendMode)) return false;
+      const colors = fill.type === "SOLID" ? [fill.color] : fill.type.startsWith("GRADIENT") ? fill.gradientStops?.map((stop) => stop.color) || [] : [];
+      if (!colors.length || colors.some((color) => color.a !== 1)) return false;
+      const values = colors.map((c) => mode === "ALPHA" ? 1 : c.r === 1 && c.g === 1 && c.b === 1 ? 1 : c.r === 0 && c.g === 0 && c.b === 0 ? 0 : -1);
+      if (values.some((value) => value < 0 || value !== values[0])) return false;
+      if (stroke && ((fill.dashPattern || node.dashPattern).length || !["NONE", "ROUND", "SQUARE"].includes(fill.cap || node.strokeCap) || !["MITER", "ROUND", "BEVEL"].includes(fill.join || node.strokeJoin) || !["CENTER", "INSIDE", "OUTSIDE"].includes(fill.align))) return false;
+      paints.push({ node, matrix: t, stroke: stroke ? fill : null, include: values[0] === 1 });
+    }
+    return graph.getChildren(node.id).length === 0;
+  }
+  return visit(root, { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 }) && paints.length ? paints : null;
 }
 
 function maskNeedsTransparency(graph, node, mode = node.maskType) {
@@ -298,8 +347,8 @@ export const fontStyle = (weight, italic) => `${weight >= 800 ? "Heavy" : weight
 export function targetReport(graph, target, report) {
   for (const node of graph.nodes.values()) {
     if (node.type === "CANVAS" || node.id === graph.rootId) continue;
-    if (["COMPONENT", "COMPONENT_SET", "INSTANCE"].includes(node.type) && target !== "fig") report.add("component-expanded", "组件按当前外观展开为可编辑分组，主实例关联不保留。", node.name);
-    if (node.layoutMode !== "NONE" && target !== "fig") report.add("layout-fixed", "尚未实现此自动布局的等价映射；固定位置不能保留原有自动排版规则。", node.name);
+    if (["COMPONENT", "COMPONENT_SET", "INSTANCE"].includes(node.type) && target !== "fig" && (target !== "xd" || !xdStandaloneComponent(graph, node))) report.add("component-expanded", "尚未实现此组件、状态或实例关联的等价映射。", node.name);
+    if (node.layoutMode !== "NONE" && target !== "fig" && (target !== "xd" || !xdResponsivePair(graph, node))) report.add("layout-fixed", "尚未实现此自动布局的等价映射；固定位置不能保留原有自动排版规则。", node.name);
     for (const fill of [...node.fills, ...node.strokes]) {
       if (target !== "fig" && !["SOLID", "IMAGE", "GRADIENT_LINEAR", "GRADIENT_RADIAL"].includes(fill.type)) report.add("paint-approximation", "目标格式尚未实现此填充类型的等价转换。", node.name);
       if (target === "xd" && fill.type === "GRADIENT_RADIAL") report.add("xd-radial-gradient", "径向渐变尚不能等价导出到 XD。", node.name);

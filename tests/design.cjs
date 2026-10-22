@@ -56,6 +56,9 @@ async function main() {
   await require("./design-fidelity.cjs")();
   await require("./design-clipping.cjs")();
   await require("./design-text.cjs")();
+  await require("./design-responsive.cjs")();
+  await require("./design-masks.cjs")();
+  await require("./design-components.cjs")();
   const { nodePath, unpack, createReport, transformProps, xdMatrix } = await import("../src/design/common.mjs");
   const source = fixture();
   const parsed = await readDesign(source, "fixture.sketch");
@@ -117,7 +120,7 @@ async function main() {
 
   const project = path.resolve(__dirname, "..");
   const largeDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "orbit-large-design-"));
-  let legacyWorkerLoads = 0;
+  let legacyWorkerLoads = 0, maskEngineLoads = 0;
   const server = http.createServer(async (request, response) => {
     try {
       const url = new URL(request.url, "http://localhost");
@@ -130,7 +133,8 @@ async function main() {
       const filename = path.resolve(project, url.pathname.slice(14) || "index.html");
       if (!filename.startsWith(project + path.sep)) throw new Error("Not found");
       const bytes = await fs.readFile(filename);
-      response.writeHead(200, { "Content-Type": ({ ".html": "text/html", ".js": "application/javascript", ".css": "text/css" })[path.extname(filename)] || "application/octet-stream" });
+      response.writeHead(200, { "Content-Type": ({ ".html": "text/html", ".js": "application/javascript", ".css": "text/css", ".wasm": "application/wasm" })[path.extname(filename)] || "application/octet-stream" });
+      if (url.pathname.endsWith("/pathkit.wasm")) maskEngineLoads++;
       if (url.pathname.endsWith("/design-worker.js") && url.searchParams.has("legacy")) {
         legacyWorkerLoads++;
         response.write("delete Array.prototype.toSorted; delete Array.prototype.toReversed;\n");
@@ -184,6 +188,23 @@ async function main() {
     const maskEntries = unzipSync(source);
     const maskPage = JSON.parse(strFromU8(maskEntries["pages/page.json"]));
     maskPage.layers[0].layers[0].layers[0].hasClippingMask = true;
+    const maskCard = maskPage.layers[0].layers[0].layers[0];
+    maskCard.style.borders = [{ ...structuredClone(maskCard.style.fills[0]), thickness: 2, position: 0 }];
+    maskEntries["pages/page.json"] = strToU8(JSON.stringify(maskPage));
+    await page.locator("#designFile").setInputFiles({ name: "stroked-mask.sketch", mimeType: "application/octet-stream", buffer: Buffer.from(zipSync(maskEntries)) });
+    await page.waitForFunction(() => document.querySelector("#designFilename").textContent === "stroked-mask.sketch" && !document.querySelector("#designConvert").disabled);
+    await page.locator("#designTarget").selectOption("xd");
+    assert.equal(await page.locator("#designConvert").isDisabled(), false);
+    await page.locator("#designConvert").click();
+    await page.locator("#designResult").waitFor({ state: "visible" });
+    assert.ok(maskEngineLoads > 0, "vector masks load the local WASM engine in the conversion worker");
+    assert.match(await page.locator("#designIssues").textContent(), /可编辑矢量裁切/);
+    const maskDownloadEvent = page.waitForEvent("download");
+    await page.locator("#designDownload").click();
+    const maskDownload = await maskDownloadEvent;
+    const maskOutput = await readDesign(new Uint8Array(await fs.readFile(await maskDownload.path())), maskDownload.suggestedFilename());
+    assert.equal([...maskOutput.graph.nodes.values()].find((node) => node.name === "Card").strokes[0].weight, 2);
+    await page.locator("#designTarget").selectOption("fig");
     maskPage.layers[0].layers[0].layers[0].style.fills[0].contextSettings = { opacity: 0.5 };
     maskEntries["pages/page.json"] = strToU8(JSON.stringify(maskPage));
     const maskSource = zipSync(maskEntries);

@@ -1,7 +1,8 @@
 import { zipSync } from "fflate";
 import svgpath from "svgpath";
 import { linearGradientTransform, ellipticalGradientTransform, gradientPoint } from "@open-pencil/scene-graph/gradient";
-import { createGraph, addNode, addImage, jsonEntry, unpack, finite, color, solid, fontWeight, fontStyle, uid, encoder, vectorProps, nodePath, pathBounds, transformProps, xdMatrix, EMPTY_PNG, scaleTree, reportMissingLayers, imageDimensions, hasImageTransform, xdImageTransform, xdMaskSupported } from "./common.mjs";
+import { createGraph, addNode, addImage, jsonEntry, unpack, finite, color, solid, fontWeight, fontStyle, uid, encoder, vectorProps, nodePath, pathBounds, transformProps, xdMatrix, EMPTY_PNG, scaleTree, reportMissingLayers, imageDimensions, hasImageTransform, xdImageTransform, xdMaskSupported, xdResponsivePair, xdVectorMaskPlan, xdStandaloneComponent } from "./common.mjs";
+import { vectorMaskPath } from "./pathops.mjs";
 
 function readColor(c = {}) {
   if (typeof c.value === "number") return color((c.value >>> 16 & 255) / 255, (c.value >>> 8 & 255) / 255, (c.value & 255) / 255, (c.value >>> 24) / 255);
@@ -76,8 +77,9 @@ export async function readXD(bytes, report) {
     }
     return [fill];
   }
-  function readNode(raw, parent, origin = { x: 0, y: 0 }, depth = 0, chain = []) {
+  function readNode(raw, parent, origin = { x: 0, y: 0 }, depth = 0, chain = [], preservingMaster = false) {
     if (depth > 128) throw new Error("XD 图层嵌套过深。");
+    if (raw.meta?.ux?.orbitLayoutBounds) return;
     if (raw.type === "syncRef") {
       const key = raw.ref || raw.syncSourceGuid;
       if (chain.includes(key)) { report.add("xd-symbol-cycle", "循环组件引用已停止展开。"); return; }
@@ -85,10 +87,11 @@ export async function readXD(bytes, report) {
       if (!source) { report.add("missing-symbol", "部分 XD 组件定义缺失，无法展开。", raw.name); return; }
       raw = { ...structuredClone(source), ...raw, type: source.type, group: raw.group || source.group, artboard: raw.artboard || source.artboard };
       chain = [...chain, key];
-      report.add("xd-component", "XD 组件按当前外观展开为可编辑图层，组件状态不保留。", raw.name);
+      if (!preservingMaster) report.add("xd-component", "XD 组件按当前外观展开为可编辑图层，组件状态不保留。", raw.name);
     }
     const shape = raw.shape || {}, text = raw.text || {}, art = global.artboards?.[raw.artboard?.ref || raw.id] || {};
     let type = raw.type === "artboard" ? "FRAME" : raw.type === "text" ? "TEXT" : raw.type === "group" ? "GROUP" : "RECTANGLE";
+    if (raw.meta?.ux?.orbitStandaloneComponent && raw.meta.ux.isMaster) { type = "COMPONENT"; preservingMaster = true; }
     let w = finite(shape.width ?? art.width ?? raw.width ?? raw.meta?.ux?.width), h = finite(shape.height ?? art.height ?? raw.height ?? raw.meta?.ux?.height);
     let ox = finite(shape.x), oy = finite(shape.y), path = "";
     if (["circle", "ellipse"].includes(shape.type)) { type = "ELLIPSE"; w = 2 * finite(shape.rx ?? shape.r); h = 2 * finite(shape.ry ?? shape.r); ox = finite(shape.cx) - w / 2; oy = finite(shape.cy) - h / 2; }
@@ -111,6 +114,13 @@ export async function readXD(bytes, report) {
     t.tx += t.a * ox + t.c * oy - origin.x;
     t.ty += t.b * ox + t.d * oy - origin.y;
     const props = { name: raw.name || art.name || raw.type, ...transformProps(t, w, h, report, raw.name), fills: paint(s.fill, raw.name, w, h), strokes: paint(s.stroke, raw.name, w, h).map((p) => ({ ...p, weight: finite(s.stroke.width, 1), align: String(s.stroke.align || "center").toUpperCase() })), visible: raw.visible !== false, opacity: s.opacity ?? raw.opacity ?? 1, blendMode: s.isolation === "auto" ? "PASS_THROUGH" : readBlend(s.blendMode), locked: !!raw.meta?.ux?.locked, clipsContent: raw.type === "artboard", dashPattern: s.stroke?.dash || [], strokeCap: s.stroke?.cap === "butt" ? "NONE" : String(s.stroke?.cap || "none").toUpperCase(), strokeJoin: String(s.stroke?.join || "miter").toUpperCase() };
+    const layoutBounds = childrenOf(raw).find((child) => child.meta?.ux?.orbitLayoutBounds)?.shape;
+    if (layoutBounds) Object.assign(props, { width: finite(layoutBounds.width, w), height: finite(layoutBounds.height, h) });
+    const layout = raw.meta?.ux?.orbitResponsivePair;
+    if (layout && ["HORIZONTAL", "VERTICAL"].includes(layout.layoutMode)) {
+      type = "FRAME";
+      Object.assign(props, { layoutMode: layout.layoutMode, layoutWrap: "NO_WRAP", primaryAxisAlign: "SPACE_BETWEEN", counterAxisAlign: "CENTER", primaryAxisSizing: "FIXED", counterAxisSizing: "FIXED", width: finite(layoutBounds?.width ?? raw.meta.ux.width, w), height: finite(layoutBounds?.height ?? raw.meta.ux.height, h) });
+    }
     if (shape.type === "compound" && shape.children?.length) { type = "BOOLEAN_OPERATION"; props.booleanOperation = String(shape.operation || "union").toUpperCase(); }
     if (raw.type === "artboard") Object.assign(props, { x: finite(art.x), y: finite(art.y), width: w, height: h });
     if (path) Object.assign(props, vectorProps(svgpath(path).scale(w ? props.width / w : 1, h ? props.height / h : 1).toString()));
@@ -140,36 +150,61 @@ export async function readXD(bytes, report) {
     const node = addNode(graph, type, parent, props);
     if (!['artboard', 'group', 'shape', 'text'].includes(raw.type)) report.add("xd-node", "部分 XD 专属图层按基础图形转换。", raw.name);
     if (raw.meta?.ux?.interactions?.length) report.add("prototype", "原型交互暂不参与格式转换。", raw.name);
-    const clips = raw.meta?.ux?.clipPathResources?.children || [];
+    const maskSource = childrenOf(raw).find((child) => child.id === raw.meta?.ux?.orbitVectorMaskSource);
+    const originalClip = raw.meta?.ux?.orbitVectorMaskGeometry;
+    const currentClip = raw.meta?.ux?.clipPathResources?.children?.[0];
+    const restoreSource = maskSource && (!originalClip || JSON.stringify({ shape: currentClip?.shape, transform: currentClip?.transform }) === JSON.stringify(originalClip));
+    const sourceMaskId = restoreSource ? maskSource.id : null;
+    if (maskSource && !restoreSource) report.add("xd-mask-edited", "使用 XD 中修改后的矢量裁切；原始蒙版源图层仍保留，不会覆盖当前裁切。", raw.name, "info");
+    const clips = sourceMaskId ? [] : raw.meta?.ux?.clipPathResources?.children || [];
     if (clips.length) {
       const clip = clips.length === 1 ? clips[0] : { type: "group", name: "裁切形状", group: { children: clips } };
-      const mask = readNode(clip, node.id, { x: 0, y: 0 }, depth + 1, chain);
-      if (mask) { mask.isMask = true; mask.maskType = raw.meta.ux.orbitMaskType || "VECTOR"; }
+      const mask = readNode(clip, node.id, { x: 0, y: 0 }, depth + 1, chain, preservingMaster);
+      if (mask) { mask.isMask = true; mask.maskType = maskSource && !restoreSource ? "VECTOR" : raw.meta.ux.orbitMaskType || "VECTOR"; }
     }
     const children = childrenOf(raw);
-    children.forEach((child) => readNode(child, node.id, raw.type === "artboard" ? { x: art.x || 0, y: art.y || 0 } : shape.type === "compound" ? { x: ox, y: oy } : { x: 0, y: 0 }, depth + 1, chain));
-    if (type === "GROUP" && children.length) {
-      node.width = Math.max(0, ...graph.getChildren(node.id).map((c) => c.x + c.width));
-      node.height = Math.max(0, ...graph.getChildren(node.id).map((c) => c.y + c.height));
+    children.forEach((child) => {
+      const isSource = child.id === sourceMaskId;
+      const restored = readNode(isSource ? { ...child, visible: child.meta?.ux?.orbitMaskSourceVisible !== false } : child, node.id, raw.type === "artboard" ? { x: art.x || 0, y: art.y || 0 } : shape.type === "compound" ? { x: ox, y: oy } : { x: 0, y: 0 }, depth + 1, chain, preservingMaster);
+      if (isSource && restored) { restored.isMask = true; restored.maskType = raw.meta.ux.orbitMaskType; }
+    });
+    if (["GROUP", "COMPONENT"].includes(type) && children.length) {
+      node.width = layoutBounds ? finite(layoutBounds.width) : Math.max(0, ...graph.getChildren(node.id).map((c) => c.x + c.width));
+      node.height = layoutBounds ? finite(layoutBounds.height) : Math.max(0, ...graph.getChildren(node.id).map((c) => c.y + c.height));
       const sx = Math.hypot(t.a, t.b) || 1, sy = Math.abs(t.a * t.d - t.b * t.c) / sx;
       if (Math.abs(sx - 1) > 0.001 || Math.abs(sy - 1) > 0.001) graph.getChildren(node.id).forEach((child) => scaleTree(graph, child, sx, sy, report));
       Object.assign(node, transformProps(t, node.width, node.height, report, raw.name));
     }
     return node;
   }
-  roots.filter((r) => r.path.startsWith("artwork/")).forEach((r) => (r.data.children || []).forEach((node) => readNode(node, page.id)));
+  roots.filter((r) => r.path.startsWith("artwork/")).forEach((r) => (r.data.children || []).forEach((node) => {
+    if (node.meta?.ux?.orbitComponentCanvas) childrenOf(node).forEach((child) => readNode(child, page.id));
+    else readNode(node, page.id);
+  }));
   if (!graph.getChildren(page.id).length) throw new Error("XD 文件没有可读取的画板或图层。");
   const interactions = jsonEntry(archive, "interactions/interactions.json", {});
   if (Object.entries(interactions).some(([key, value]) => key !== "version" && value && typeof value === "object" && Object.keys(value).length)) report.add("prototype", "XD 原型交互暂不参与格式转换。");
   return { graph, thumbnail: archive["preview.png"] || archive["thumbnail.png"] };
 }
 
-export function writeXD(graph, name, thumbnail, report) {
+export async function writeXD(graph, name, thumbnail, report) {
   thumbnail ||= EMPTY_PNG;
   const archive = { mimetype: [encoder("application/vnd.adobe.sparkler.project+dcxucf"), { level: 0 }] };
-  const rootID = uid(), boards = {}, artwork = [], resources = [];
+  const rootID = uid(), boards = {}, artwork = [], resources = [], symbols = [];
   const written = new Set();
   const imageSizes = new Map();
+  const vectorMasks = new Map();
+  for (const node of graph.nodes.values()) if (node.isMask && (node.type === "GROUP" || node.strokes.some((stroke) => stroke.visible))) {
+    const plan = xdVectorMaskPlan(graph, node);
+    if (plan) {
+      try {
+        const path = await vectorMaskPath(plan);
+        if (!path) throw new Error("empty mask");
+        vectorMasks.set(node.id, path);
+      }
+      catch { report.add("xd-mask-path", "此蒙版的矢量轮廓计算失败，未导出不完整结果。", node.name); }
+    }
+  }
   const component = (path, type, rel = "primary", extras = {}) => ({ rel, type, id: uid(), state: "unmodified", name: path, path, ...extras });
   const folder = (path, children = [], components = [], extras = {}) => ({ id: uid(), name: path, path, children, components, ...extras });
   for (const [hash, data] of graph.images) {
@@ -213,6 +248,26 @@ export function writeXD(graph, name, thumbnail, report) {
   function localPaintNode(node, name, fills, strokes) {
     return { ...node, name, x: 0, y: 0, rotation: 0, flipX: false, flipY: false, opacity: 1, visible: true, locked: false, fills, strokes, effects: [], blendMode: "NORMAL" };
   }
+  function keepBounds(value, node) {
+    if (value.type !== "group") return;
+    const bounds = { type: "shape", name: `${node.name} / 布局尺寸`, id: uid(), meta: { ux: { orbitLayoutBounds: true, customConstraints: true, constraintLeft: true, constraintRight: true, constraintTop: true, constraintBottom: true } }, shape: { type: "rect", x: 0, y: 0, width: node.width, height: node.height }, style: { fill: { type: "solid", color: writeColor(color(0, 0, 0, 0)) }, stroke: { type: "none" } } };
+    value.group.children.unshift(bounds);
+  }
+  function componentMaster(value, node) {
+    const symbolId = uid(), definition = structuredClone(value), syncMap = {};
+    definition.id = uid(); delete definition.transform;
+    Object.assign(definition.meta.ux, { symbolId, width: node.width, height: node.height, componentType: "componentNoBounds" });
+    function reference(source) {
+      const guid = uid(); syncMap[source.id] = guid;
+      const ref = { type: "syncRef", syncSourceGuid: source.id, guid };
+      if (source.group) ref.group = { children: source.group.children.map(reference) };
+      return ref;
+    }
+    value.group.children = definition.group.children.map(reference);
+    Object.assign(value.meta.ux, { symbolId, isMaster: true, componentType: "componentNoBounds", orbitStandaloneComponent: true, syncMap });
+    symbols.push(definition);
+    report.add("xd-component-master", "独立组件已保留为 XD 原生主组件，可继续编辑并创建关联实例。", node.name, "info");
+  }
   function clipGroup(name, mask, children, transform = { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 }, maskType = "VECTOR") {
     return { type: "group", name, id: uid(), transform, meta: { ux: { hasCustomName: true, orbitMaskType: maskType, clipPathResources: { type: "clipPath", children: [mask] } } }, group: { children } };
   }
@@ -221,7 +276,17 @@ export function writeXD(graph, name, thumbnail, report) {
     let destination = output, x = extraX, y = extraY;
     for (const node of nodes) {
       if (node.isMask && xdMaskSupported(graph, node)) {
-        const group = clipGroup(`${node.name} / 蒙版`, layer(node), [], { a: 1, b: 0, c: 0, d: 1, tx: x, ty: y }, node.maskType);
+        const source = layer(node);
+        let mask = source, sourceLayers = [];
+        if (vectorMasks.has(node.id)) {
+          mask = { type: "shape", name: `${node.name} / 矢量裁切`, id: uid(), transform: xdMatrix(node), shape: { type: "path", path: vectorMasks.get(node.id) }, style: { fill: { type: "solid", color: writeColor(color()) }, stroke: { type: "none" } } };
+          source.visible = false;
+          source.meta.ux.orbitMaskSourceVisible = node.visible;
+          sourceLayers = [source];
+          report.add("xd-vector-mask", "黑白或带描边蒙版已映射为可编辑矢量裁切；原始蒙版图层和描边参数保留在隐藏的可编辑源图层中。", node.name, "info");
+        }
+        const group = clipGroup(`${node.name} / 蒙版`, mask, sourceLayers, { a: 1, b: 0, c: 0, d: 1, tx: x, ty: y }, node.maskType);
+        if (sourceLayers.length) Object.assign(group.meta.ux, { orbitVectorMaskSource: source.id, orbitVectorMaskGeometry: { shape: mask.shape, transform: mask.transform } });
         destination.push(group);
         destination = group.group.children;
         x = y = 0;
@@ -292,7 +357,16 @@ export function writeXD(graph, name, thumbnail, report) {
       if (!path) report.add("vector-empty", "部分矢量没有可读取的轮廓。", node.name);
     } else {
       value.type = "group";
+      const responsive = xdResponsivePair(graph, node);
       let content = children(graph.getChildren(node.id));
+      if (responsive) {
+        content.forEach((child, index) => {
+          keepBounds(child, responsive.children[index]);
+          Object.assign(child.meta.ux, { customConstraints: true, constraintWidth: true, constraintHeight: true, constraintLeft: responsive.horizontal && index === 0, constraintRight: responsive.horizontal && index === 1, constraintTop: !responsive.horizontal && index === 0, constraintBottom: !responsive.horizontal && index === 1 });
+        });
+        value.meta.ux.orbitResponsivePair = { layoutMode: node.layoutMode };
+        report.add("xd-responsive-pair", "两端分布、居中对齐和固定子元素尺寸已映射为 XD 原生响应式约束。", node.name, "info");
+      }
       if (node.clipsContent) {
         const mask = layer({ ...localPaintNode(node, `${node.name} / 画框裁切`, [solid(color())], []), type: "RECTANGLE" });
         content = [clipGroup(`${node.name} / 裁切内容`, mask, content)];
@@ -301,8 +375,10 @@ export function writeXD(graph, name, thumbnail, report) {
       value.meta.ux.width = node.width; value.meta.ux.height = node.height;
       if (node.fills.length) value.group.children.unshift(layer({ ...localPaintNode(node, `${node.name} 背景`, node.fills, []), type: "RECTANGLE" }));
       if (node.strokes.length) value.group.children.push(layer({ ...localPaintNode(node, `${node.name} 描边`, [], node.strokes), type: "RECTANGLE" }));
+      if (responsive) keepBounds(value, node);
       value.style.fill = value.style.stroke = { type: "none" };
     }
+    if (xdStandaloneComponent(graph, node)) componentMaster(value, node);
     return value;
   }
   const sourcePages = graph.getPages(true);
@@ -312,9 +388,9 @@ export function writeXD(graph, name, thumbnail, report) {
     const roots = graph.getChildren(page.id);
     const frames = roots.filter((n) => n.type === "FRAME" || n.type === "COMPONENT");
     const free = roots.filter((n) => !frames.includes(n));
-    const sourceBoards = [...frames.map((node) => ({ node, items: graph.getChildren(node.id) })), ...(free.length ? [{ node: { ...page, name: `${page.name} / 画布`, x: 0, y: 0, width: Math.max(1, ...free.map((n) => n.x + n.width)), height: Math.max(1, ...free.map((n) => n.y + n.height)) }, items: free }] : [])];
+    const sourceBoards = [...frames.map((node) => xdStandaloneComponent(graph, node) ? { componentCanvas: true, node: { ...node, name: `${node.name} / 组件画布`, opacity: 1, fills: [], strokes: [], effects: [] }, items: [{ ...node, x: 0, y: 0 }] } : { node, items: graph.getChildren(node.id) }), ...(free.length ? [{ node: { ...page, name: `${page.name} / 画布`, x: 0, y: 0, width: Math.max(1, ...free.map((n) => n.x + n.width)), height: Math.max(1, ...free.map((n) => n.y + n.height)) }, items: free }] : [])];
     let pageRight = 0;
-    for (const { node, items } of sourceBoards) {
+    for (const { node, items, componentCanvas } of sourceBoards) {
       written.add(node.id);
       const id = uid(), x = node.x + pageOffset, y = node.y;
       boards[id] = { width: node.width || 1, height: node.height || 1, name: node.name, x, y };
@@ -325,14 +401,14 @@ export function writeXD(graph, name, thumbnail, report) {
         boardChildren.unshift(layer({ ...localPaintNode(node, `${node.name} 背景`, node.fills, node.strokes), type: "RECTANGLE", x, y }));
         boardStyle.fill = boardStyle.stroke = { type: "none" };
       }
-      const content = { version: "1.5.0", children: [{ type: "artboard", id, name: node.name, visible: node.visible, meta: { ux: { hasCustomName: true, locked: !!node.locked } }, style: boardStyle, artboard: { children: boardChildren, ref: id, meta: { ux: { path: id } } } }], resources: { href: "/resources/graphics/graphicContent.agc" }, artboards: { href: "/resources/graphics/graphicContent.agc" } };
+      const content = { version: "1.5.0", children: [{ type: "artboard", id, name: node.name, visible: node.visible, meta: { ux: { hasCustomName: true, locked: !!node.locked, ...(componentCanvas ? { orbitComponentCanvas: true } : {}) } }, style: boardStyle, artboard: { children: boardChildren, ref: id, meta: { ux: { path: id } } } }], resources: { href: "/resources/graphics/graphicContent.agc" }, artboards: { href: "/resources/graphics/graphicContent.agc" } };
       const path = `artboard-${id}`;
       archive[`artwork/${path}/graphics/graphicContent.agc`] = encoder(JSON.stringify(content));
       artwork.push(folder(path, [folder("graphics", [], [component("graphicContent.agc", "application/vnd.adobe.agc.graphicsTree+json")])], [], { "uxdesign#bounds": boards[id] }));
     }
     pageOffset += pageRight + 300;
   }
-  archive["resources/graphics/graphicContent.agc"] = encoder(JSON.stringify({ version: "1.5.0", children: [], resources: { gradients: {}, clipPaths: {}, meta: { ux: { symbols: [], symbolsMetadata: { usingNestedSymbolSyncing: true }, colorSwatches: [], documentLibrary: { version: 5, isStickerSheet: false, hashedMetadata: { publishedDocLibId: null }, elements: [], groupData: { groups: [] } }, gridDefaults: { defaultGrid: null, layoutOverrides: null }, colorProfile: "srgb" } } }, artboards: boards }));
+  archive["resources/graphics/graphicContent.agc"] = encoder(JSON.stringify({ version: "1.5.0", children: [], resources: { gradients: {}, clipPaths: {}, meta: { ux: { symbols, symbolsMetadata: { usingNestedSymbolSyncing: true }, colorSwatches: [], documentLibrary: { version: 5, isStickerSheet: false, hashedMetadata: { publishedDocLibId: null }, elements: [], groupData: { groups: [] } }, gridDefaults: { defaultGrid: null, layoutOverrides: null }, colorProfile: "srgb" } } }, artboards: boards }));
   archive["artwork/pasteboard/graphics/graphicContent.agc"] = encoder(JSON.stringify({ version: "1.5.0", children: [], resources: { href: "/resources/graphics/graphicContent.agc" }, artboards: { href: "/resources/graphics/graphicContent.agc" } }));
   artwork.unshift(folder("pasteboard", [folder("graphics", [], [component("graphicContent.agc", "application/vnd.adobe.agc.graphicsTree+json")])]));
   archive["interactions/interactions.json"] = encoder('{"version":"0.24"}');

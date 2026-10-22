@@ -2,6 +2,12 @@
   "name": "pm-workbench",
   "version": "1.1.0",
   "private": true,
+  "imports": {
+    "#pathkit-options": {
+      "browser": "./src/design/pathkit-browser.mjs",
+      "default": "./src/design/pathkit-node.mjs"
+    }
+  },
   "scripts": {
     "build": "node scripts/build.cjs",
     "test": "node tests/auth-network.cjs && node tests/auth.cjs && node tests/converter.cjs && node tests/background.cjs && node tests/design.cjs",
@@ -15,6 +21,7 @@
     "gifenc": "1.0.3",
     "gifuct-js": "2.1.2",
     "pako": "3.0.1",
+    "pathkit-wasm": "1.0.0",
     "protobufjs": "8.8.0",
     "svgpath": "2.6.0"
   },

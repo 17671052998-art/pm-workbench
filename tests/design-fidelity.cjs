@@ -133,7 +133,7 @@ module.exports = async function testFidelity() {
   const binaryMask = addNode(graph, "GROUP", board.id, { name: "Binary mask", isMask: true, maskType: "LUMINANCE" });
   addNode(graph, "RECTANGLE", binaryMask.id, { width: 20, height: 20, fills: [solid(color(1, 1, 1))] });
   addNode(graph, "RECTANGLE", binaryMask.id, { width: 5, height: 5, fills: [solid(color())] });
-  assert.deepEqual(inspectDesign(parsed, "xd").filter((issue) => issue.code === "mask").map((issue) => issue.category).sort(), ["format", "implementation"], "binary group masks are converter gaps, not a native alpha-mask restriction");
+  assert.deepEqual(inspectDesign(parsed, "xd").filter((issue) => issue.code === "mask").map((issue) => issue.category), ["format"], "binary group masks are handled with native editable vector clipping");
   graph.deleteNode(binaryMask.id);
   await assert.rejects(convertDesign(parsed, "xd"), (error) => {
     assert.equal(error.code, "PRESERVATION_REQUIRED");

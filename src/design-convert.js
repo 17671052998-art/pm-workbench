@@ -1,5 +1,5 @@
 const designWorkerURL = new URL("./design-worker.js", document.currentScript.src);
-designWorkerURL.search = "v=design-preflight-3";
+designWorkerURL.search = "v=design-native-adapters-4";
 const formatNames = { fig: "Figma (.fig)", sketch: "Sketch (.sketch)", xd: "Adobe XD (.xd)" };
 
 export function renderDesignWorkspace() {

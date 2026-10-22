@@ -5,7 +5,10 @@ const path = require("node:path");
 const result = buildSync({
   entryPoints: ["src/gif-worker.js", "src/background-gif-worker.js", "src/design-worker.js", "src/tools.js"],
   bundle: true, minify: true, format: "iife", target: "es2020", outdir: "assets", metafile: true,
+  external: ["fs", "path"],
 });
+fs.copyFileSync(require.resolve("pathkit-wasm/bin/pathkit.wasm"), "assets/pathkit.wasm");
+fs.chmodSync("assets/pathkit.wasm", 0o644);
 
 const packages = new Map();
 for (const input of Object.keys(result.metafile.inputs)) {
