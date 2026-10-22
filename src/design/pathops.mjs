@@ -8,6 +8,15 @@ function pathKit() {
   return ready;
 }
 
+export async function tightPathBounds(value) {
+  const kit = await pathKit(), path = kit.FromSVGString(value);
+  if (!path) throw new Error("无法读取字形轮廓。");
+  try {
+    const b = path.computeTightBounds();
+    return { x: b.fLeft, y: b.fTop, width: b.fRight - b.fLeft, height: b.fBottom - b.fTop };
+  } finally { path.delete(); }
+}
+
 function shapePath(node) {
   if (node.type === "ELLIPSE") return `M${node.width / 2} 0 A${node.width / 2} ${node.height / 2} 0 1 1 ${node.width / 2} ${node.height} A${node.width / 2} ${node.height / 2} 0 1 1 ${node.width / 2} 0 Z`;
   if (node.type === "LINE") return `M0 0 L${node.width} ${node.height}`;

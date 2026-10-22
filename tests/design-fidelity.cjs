@@ -82,8 +82,9 @@ module.exports = async function testFidelity() {
   assert.equal(filters[2].global, true);
   assert.equal(filters[2].params.backgroundEffect, false);
   const g = raw("Gradient").style.fill;
-  assert.equal(g.units, "objectBoundingBox");
-  assert.deepEqual([g.x1, g.y1, g.x2, g.y2], [0, 0.5, 1, 0.5]);
+  assert.equal(g.gradient.units, "objectBoundingBox");
+  assert.deepEqual([g.gradient.x1, g.gradient.y1, g.gradient.x2, g.gradient.y2], [0, 0.5, 1, 0.5]);
+  assert.equal(g.x1, undefined, "XD stores gradient geometry inside the gradient object, not on the fill");
   assert.equal(g.gradient.meta.ux.gradientResources.type, "linear");
   assert.deepEqual(g.gradient.meta.ux.gradientResources.stops.map((stop) => stop.color.alpha), [0.2, 0.8]);
   assert.equal(raw("Boolean").shape.type, "compound");

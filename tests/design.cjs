@@ -59,6 +59,7 @@ async function main() {
   await require("./design-responsive.cjs")();
   await require("./design-masks.cjs")();
   await require("./design-components.cjs")();
+  const compatibleFixture = await require("./design-compatible.cjs")();
   const { nodePath, unpack, createReport, transformProps, xdMatrix } = await import("../src/design/common.mjs");
   const source = fixture();
   const parsed = await readDesign(source, "fixture.sketch");
@@ -175,6 +176,30 @@ async function main() {
       assert.equal(result.stats.text, 1); assert.equal(result.stats.images, 1);
     }
     await page.screenshot({ path: "/tmp/pm-workbench-design-native.png", fullPage: true });
+    await page.locator("#designFile").setInputFiles({ name: "compatible.fig", mimeType: "application/octet-stream", buffer: Buffer.from(compatibleFixture.bytes) });
+    await page.waitForFunction(() => document.querySelector("#designFilename").textContent === "compatible.fig");
+    await page.locator("#designTarget").selectOption("xd");
+    assert.equal(await page.locator("#designModeControl").isVisible(), true);
+    assert.equal(await page.locator("#designMode").inputValue(), "compatible");
+    assert.equal(await page.locator("#designConvert").isDisabled(), false);
+    assert.match(await page.locator("#designIssues").textContent(), /兼容重建/);
+    await page.locator("#designMode").selectOption("strict");
+    assert.equal(await page.locator("#designConvert").isDisabled(), true);
+    await page.locator("#designMode").selectOption("compatible");
+    assert.equal(await page.locator("#designConvert").isDisabled(), false);
+    await page.locator("#designConvert").click();
+    await page.locator("#designResult").waitFor({ state: "visible" });
+    assert.match(await page.locator("#designResultTitle").textContent(), /兼容.*源图层备份/);
+    const compatibleDownloadEvent = page.waitForEvent("download");
+    await page.locator("#designDownload").click();
+    const compatibleDownload = await compatibleDownloadEvent;
+    const compatibleOutput = await readDesign(new Uint8Array(await fs.readFile(await compatibleDownload.path())), compatibleDownload.suggestedFilename());
+    assert.ok(compatibleOutput.graph.images.size > 1);
+    assert.ok([...compatibleOutput.graph.nodes.values()].some((node) => node.name.includes("原始图层备份") && node.visible === false));
+    assert.deepEqual(errors, []);
+    await page.screenshot({ path: "/tmp/pm-workbench-design-compatible.png", fullPage: true });
+    await page.locator("#designFile").setInputFiles({ name: "after-compatible.sketch", mimeType: "application/octet-stream", buffer: Buffer.from(source) });
+    await page.waitForFunction(() => document.querySelector("#designFilename").textContent === "after-compatible.sketch");
     await page.locator("#designTarget").selectOption("fig");
     assert.equal(await page.locator("#designResult").isVisible(), false);
     await page.locator("#designFile").setInputFiles({ name: "bad.fig", mimeType: "application/octet-stream", buffer: Buffer.from([1, 2, 3]) });

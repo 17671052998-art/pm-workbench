@@ -3,6 +3,10 @@
   "version": "1.1.0",
   "private": true,
   "imports": {
+    "#design-canvas": {
+      "browser": "./src/design/canvas-browser.mjs",
+      "default": "./src/design/canvas-node.mjs"
+    },
     "#pathkit-options": {
       "browser": "./src/design/pathkit-browser.mjs",
       "default": "./src/design/pathkit-node.mjs"
@@ -26,6 +30,7 @@
     "svgpath": "2.6.0"
   },
   "devDependencies": {
+    "@napi-rs/canvas": "1.0.13",
     "esbuild": "0.28.2",
     "playwright": "1.62.1",
     "svgaplayerweb": "2.3.2",

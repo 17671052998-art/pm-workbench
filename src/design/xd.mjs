@@ -3,6 +3,7 @@ import svgpath from "svgpath";
 import { linearGradientTransform, ellipticalGradientTransform, gradientPoint } from "@open-pencil/scene-graph/gradient";
 import { createGraph, addNode, addImage, jsonEntry, unpack, finite, color, solid, fontWeight, fontStyle, uid, encoder, vectorProps, nodePath, pathBounds, transformProps, xdMatrix, EMPTY_PNG, scaleTree, reportMissingLayers, imageDimensions, hasImageTransform, xdImageTransform, xdMaskSupported, xdResponsivePair, xdVectorMaskPlan, xdStandaloneComponent } from "./common.mjs";
 import { vectorMaskPath } from "./pathops.mjs";
+import { prepareXDCompatibility } from "./xd-compat.mjs";
 
 function readColor(c = {}) {
   if (typeof c.value === "number") return color((c.value >>> 16 & 255) / 255, (c.value >>> 8 & 255) / 255, (c.value & 255) / 255, (c.value >>> 24) / 255);
@@ -68,7 +69,7 @@ export async function readXD(bytes, report) {
     } else if (p.type === "gradient") {
       const resource = p.gradient?.ref ? global.resources?.gradients?.[p.gradient.ref] : p.gradient || p;
       const g = resource?.meta?.ux?.gradientResources || resource || {};
-      const start = g.from || { x: p.x1 ?? g.x1 ?? 0, y: p.y1 ?? g.y1 ?? 0 }, end = g.to || { x: p.x2 ?? g.x2 ?? 1, y: p.y2 ?? g.y2 ?? 0 };
+      const start = g.from || { x: p.gradient?.x1 ?? resource?.x1 ?? p.x1 ?? g.x1 ?? 0, y: p.gradient?.y1 ?? resource?.y1 ?? p.y1 ?? g.y1 ?? 0 }, end = g.to || { x: p.gradient?.x2 ?? resource?.x2 ?? p.x2 ?? g.x2 ?? 1, y: p.gradient?.y2 ?? resource?.y2 ?? p.y2 ?? g.y2 ?? 0 };
       const radial = g.type === "radial";
       const cx = p.cx ?? 0.5, cy = p.cy ?? 0.5, radius = p.r ?? 0.5;
       fill = { ...fill, type: radial ? "GRADIENT_RADIAL" : "GRADIENT_LINEAR", gradientStops: (g.stops || []).map((s) => ({ color: readColor(s.color), position: s.offset ?? s.position ?? 0 })), gradientTransform: radial ? ellipticalGradientTransform({ x: cx, y: cy }, { x: cx + radius, y: cy }, { x: cx, y: cy + radius }) : linearGradientTransform(start, end, w || 1, h || 1) };
@@ -187,12 +188,13 @@ export async function readXD(bytes, report) {
   return { graph, thumbnail: archive["preview.png"] || archive["thumbnail.png"] };
 }
 
-export async function writeXD(graph, name, thumbnail, report) {
+export async function writeXD(graph, name, thumbnail, report, options = {}) {
   thumbnail ||= EMPTY_PNG;
   const archive = { mimetype: [encoder("application/vnd.adobe.sparkler.project+dcxucf"), { level: 0 }] };
   const rootID = uid(), boards = {}, artwork = [], resources = [], symbols = [];
   const written = new Set();
   const imageSizes = new Map();
+  const compatibility = options.mode === "compatible" ? await prepareXDCompatibility(graph) : { masks: new Map(), images: new Map(), shadows: new Map(), texts: new Map(), resources: new Map() };
   const vectorMasks = new Map();
   for (const node of graph.nodes.values()) if (node.isMask && (node.type === "GROUP" || node.strokes.some((stroke) => stroke.visible))) {
     const plan = xdVectorMaskPlan(graph, node);
@@ -207,7 +209,7 @@ export async function writeXD(graph, name, thumbnail, report) {
   }
   const component = (path, type, rel = "primary", extras = {}) => ({ rel, type, id: uid(), state: "unmodified", name: path, path, ...extras });
   const folder = (path, children = [], components = [], extras = {}) => ({ id: uid(), name: path, path, children, components, ...extras });
-  for (const [hash, data] of graph.images) {
+  for (const [hash, data] of [...graph.images, ...compatibility.resources]) {
     imageSizes.set(hash, imageDimensions(data));
     archive[`resources/${hash}`] = [data, { level: 0 }];
     resources.push(component(hash, data[0] === 0x89 ? "image/png" : data[0] === 0xff ? "image/jpeg" : "application/octet-stream"));
@@ -222,7 +224,7 @@ export async function writeXD(graph, name, thumbnail, report) {
     if (fill.type.startsWith("GRADIENT")) {
       const from = fill.gradientTransform ? gradientPoint(fill.gradientTransform, { x: 0, y: 0.5 }) : { x: 0, y: 0 };
       const to = fill.gradientTransform ? gradientPoint(fill.gradientTransform, { x: 1, y: 0.5 }) : { x: 1, y: 0 };
-      return { type: "gradient", gradient: { meta: { ux: { gradientResources: { type: "linear", stops: (fill.gradientStops || []).map((s) => ({ offset: s.position, color: writeColor(s.color) })) } } } }, x1: from.x, y1: from.y, x2: to.x, y2: to.y, units: "objectBoundingBox" };
+      return { type: "gradient", gradient: { meta: { ux: { gradientResources: { type: "linear", stops: (fill.gradientStops || []).map((s) => ({ offset: s.position, color: writeColor(s.color) })) } } }, x1: from.x, y1: from.y, x2: to.x, y2: to.y, units: "objectBoundingBox" } };
     }
     return { type: "solid", color: writeColor({ ...fill.color, a: fill.color.a * fill.opacity }) };
   }
@@ -246,7 +248,7 @@ export async function writeXD(graph, name, thumbnail, report) {
     };
   }
   function localPaintNode(node, name, fills, strokes) {
-    return { ...node, name, x: 0, y: 0, rotation: 0, flipX: false, flipY: false, opacity: 1, visible: true, locked: false, fills, strokes, effects: [], blendMode: "NORMAL" };
+    return { ...node, id: uid(), name, x: 0, y: 0, rotation: 0, flipX: false, flipY: false, opacity: 1, visible: true, locked: false, fills, strokes, effects: [], blendMode: "NORMAL" };
   }
   function keepBounds(value, node) {
     if (value.type !== "group") return;
@@ -273,9 +275,23 @@ export async function writeXD(graph, name, thumbnail, report) {
   }
   function children(nodes, extraX = 0, extraY = 0) {
     const output = [];
-    let destination = output, x = extraX, y = extraY;
+    let destination = output, x = extraX, y = extraY, sourceBackup;
     for (const node of nodes) {
-      if (node.isMask && xdMaskSupported(graph, node)) {
+      if (compatibility.masks.has(node.id)) {
+        const source = layer(node);
+        source.meta.ux.orbitSourceProperties = { kind: "alpha-mask", maskType: node.maskType, opacity: node.opacity, fills: node.fills, strokes: node.strokes, effects: node.effects };
+        const backup = { type: "group", name: `${node.name} / 原始图层备份（隐藏）`, id: uid(), visible: false, group: { children: [source] } };
+        const group = { type: "group", name: `${node.name} / 兼容透明蒙版`, id: uid(), transform: { a: 1, b: 0, c: 0, d: 1, tx: x, ty: y }, meta: { ux: { hasCustomName: true, orbitCompatibleMask: true, orbitSourceProperties: source.meta.ux.orbitSourceProperties } }, group: { children: [backup] } };
+        destination.push(group); destination = group.group.children; sourceBackup = backup.group.children; x = y = 0;
+      } else if (compatibility.images.has(node.id)) {
+        const source = layer(node);
+        source.name = `${node.name} / 原始图层`;
+        source.meta.ux.orbitSourceProperties = { fills: node.fills, opacity: node.opacity };
+        sourceBackup.push(source);
+        const display = layer({ ...node, fills: [{ ...node.fills[0], imageHash: compatibility.images.get(node.id) }] }, x, y);
+        display.meta.ux.orbitCompatibleImage = { originalImageHash: node.fills[0].imageHash };
+        destination.push(display);
+      } else if (node.isMask && xdMaskSupported(graph, node)) {
         const source = layer(node);
         let mask = source, sourceLayers = [];
         if (vectorMasks.has(node.id)) {
@@ -300,6 +316,34 @@ export async function writeXD(graph, name, thumbnail, report) {
     const id = uid(), transform = xdMatrix(node);
     transform.tx += extraX; transform.ty += extraY;
     const value = { type: "shape", name: node.name, id, transform, visible: node.visible, meta: { ux: { hasCustomName: true, locked: !!node.locked } }, style: style(node) };
+    if (compatibility.shadows.has(node.id)) {
+      const original = layer({ ...localPaintNode(node, `${node.name} / 原始效果备份（隐藏）`, node.fills, node.strokes), effects: node.effects });
+      original.visible = false;
+      original.meta.ux.orbitSourceProperties = { effects: node.effects };
+      const base = layer({ ...localPaintNode(node, `${node.name} / 可编辑形状`, node.fills, node.strokes), effects: node.effects.filter((effect) => !effect.spread) });
+      const effects = compatibility.shadows.get(node.id).filter(({ effect }) => effect.visible !== false).map(({ hash }, index) => layer({ ...localPaintNode(node, `${node.name} / 阴影兼容效果 ${index + 1}`, [{ ...solid(color()), type: "IMAGE", imageHash: hash, imageScaleMode: "STRETCH" }], []), type: "RECTANGLE", cornerRadius: 0, independentCorners: false }));
+      value.type = "group";
+      value.style.fill = value.style.stroke = { type: "none" }; value.style.filters = [];
+      value.meta.ux.orbitSourceProperties = { kind: "shadow-spread", effects: node.effects };
+      value.group = { children: [original, base, ...effects] };
+      return value;
+    }
+    if (compatibility.texts.has(node.id)) {
+      const text = layer(localPaintNode(node, `${node.name} / 原始文字备份（隐藏）`, [solid(color())], []));
+      text.visible = false;
+      text.meta.ux.orbitSourceProperties = { fills: node.fills, strokes: node.strokes, effects: node.effects };
+      const { path, bounds } = compatibility.texts.get(node.id);
+      const appearanceStyle = { ...style(node), opacity: node.fills[0].opacity, blendMode: "normal", filters: [] };
+      for (const [position, size] of [["x", "width"], ["y", "height"]]) for (const end of [1, 2]) appearanceStyle.fill.gradient[`${position}${end}`] = (appearanceStyle.fill.gradient[`${position}${end}`] * node[size] - bounds[position]) / (bounds[size] || 1);
+      const nativePath = nodePath({ ...node, ...vectorProps(path) });
+      const appearance = { type: "shape", name: `${node.name} / 渐变文字矢量外观`, id: uid(), transform: { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 }, visible: true, meta: { ux: { hasCustomName: true } }, shape: { type: "path", path: nativePath }, style: appearanceStyle };
+      value.type = "group";
+      value.style.fill = value.style.stroke = { type: "none" };
+      value.group = { children: [text, appearance] };
+      keepBounds(value, node);
+      value.meta.ux.orbitSourceProperties = { kind: "text-fill", fills: node.fills, strokes: node.strokes, text: node.text };
+      return value;
+    }
     const isLeaf = ["TEXT", "ELLIPSE", "RECTANGLE", "ROUNDED_RECTANGLE", "LINE", "VECTOR", "STAR", "POLYGON", "BOOLEAN_OPERATION"].includes(node.type);
     if (isLeaf && (node.fills.length > 1 || node.strokes.length > 1 || node.strokes.length && node.fills.some(needsImageTransform) || [...node.fills, ...node.strokes].some((paint) => !paint.visible || paint.opacity !== 1 || paint.blendMode && !["NORMAL", "PASS_THROUGH"].includes(paint.blendMode)))) {
       // XD has one native fill/stroke; keep every paint in an editable layer stack.

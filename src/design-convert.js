@@ -1,5 +1,5 @@
 const designWorkerURL = new URL("./design-worker.js", document.currentScript.src);
-designWorkerURL.search = "v=design-native-adapters-4";
+designWorkerURL.search = "v=design-compatible-5";
 const formatNames = { fig: "Figma (.fig)", sketch: "Sketch (.sketch)", xd: "Adobe XD (.xd)" };
 
 export function renderDesignWorkspace() {
@@ -17,15 +17,16 @@ export function renderDesignWorkspace() {
         <div class="tool-settings">
           <h3>2. 转换与下载</h3>
           <label class="form-label" for="designTarget">目标格式<select id="designTarget"><option value="fig">Figma (.fig)</option><option value="sketch">Sketch (.sketch)</option><option value="xd">Adobe XD (.xd)</option></select></label>
-          <p class="tool-output-hint">按完整保留可编辑图层和属性的要求转换，不丢弃效果、不合成为图片。选文件后会先检查当前格式的适配情况。</p>
-          <p class="tool-hint">无法完整转换时会直接说明是转换器尚未适配，还是目标格式本身存在限制。没有忽略属性后强行导出的开关。检查通过仍需在目标软件中核对外观。</p>
+          <label id="designModeControl" class="form-label" for="designMode" hidden>XD 输出方式<select id="designMode"><option value="compatible">兼容整稿（保留原图与源图层）</option><option value="strict">严格保留（不兼容时停止）</option></select></label>
+          <p class="tool-output-hint">兼容整稿会重建已支持的 XD 格式差异：透明蒙版写入各图片透明通道，复杂文字填充保留为矢量外观和文字备份，阴影扩展生成局部效果图层。保留原图、源图层和参数备份，不将整页合成图片。</p>
+          <p class="tool-hint">兼容结果不等于所有原始效果参数在 XD 中仍能独立调整。严格模式继续阻止属性变化；两种模式都会拦截尚无处理方案的问题，不会直接忽略。字体需在目标软件中安装。</p>
           <div class="tool-actions"><button id="designConvert" class="btn primary" type="button" disabled>开始转换</button><button id="designCancel" class="btn secondary" type="button" hidden>取消处理</button></div>
           <p id="designStatus" class="tool-status" role="status" aria-live="polite">请先选择设计文件。</p>
-          <div id="designResult" class="tool-result" hidden><strong>设计文件已生成</strong><p id="designResultInfo"></p><a id="designDownload" class="btn primary">下载设计文件</a><p class="tool-hint">请在目标软件中打开结果，检查字体、位置与复杂效果。</p></div>
+          <div id="designResult" class="tool-result" hidden><strong id="designResultTitle">设计文件已生成</strong><p id="designResultInfo"></p><a id="designDownload" class="btn primary">下载设计文件</a><p class="tool-hint">请在目标软件中打开结果，检查字体、位置与复杂效果。兼容重建详情见下方说明；原始图层备份默认隐藏。</p></div>
           <section id="designReport" class="design-report" aria-labelledby="designReportTitle" hidden><h4 id="designReportTitle">当前文件的适配情况</h4><ul id="designIssues"></ul><p id="designNoIssues" hidden>未检测到已知不兼容项，可以开始转换。生成后仍需在目标软件中核对。</p></section>
         </div>
       </div>
-      <div class="tool-notes"><strong>当前支持范围</strong><p>此版本尚未完成所有跨格式属性的适配。遇到不能等价保留的组件关联、自动布局、蒙版或特效时，不会降级为普通分组、固定位置或合成图片后导出。</p><p>字体文件不会随设计稿嵌入，目标软件需要安装原稿使用的字体。离开工具箱或退出登录会清除本次文件。</p></div>
+      <div class="tool-notes"><strong>当前支持范围</strong><p>XD 默认使用兼容整稿模式，并逐项列出发生的兼容重建。其他格式及严格模式按原生属性检查。复杂组件状态、未支持的蒙版组合或特殊效果仍会明确阻止，不能承诺任意文件都能无损互转。</p><p>字体文件不会随设计稿嵌入。离开工具箱或退出登录会清除本次文件；处理全过程在本机完成，不上传设计文件。</p></div>
     </section>`;
 }
 
@@ -33,16 +34,17 @@ export function mountDesignWorkspace(root, on) {
   const $ = (id) => root.querySelector(`#${id}`);
   let worker = null, ready = false, busy = false, revision = 0, disposed = false;
   let resultURL = null, previewURL = null, timer = null, file = null;
-  let compatibility = {};
-  const currentIssues = () => compatibility[$("designTarget").value] || [];
+  let compatibility = {}, compatible = {};
+  const compatibleMode = () => $("designTarget").value === "xd" && $("designMode").value === "compatible";
+  const currentIssues = () => (compatibleMode() ? compatible : compatibility)[$("designTarget").value] || [];
   const hasBlockers = () => currentIssues().some((issue) => issue.severity !== "info");
   const size = (bytes) => bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${(bytes / 1024).toFixed(1)} KB`;
   const setStatus = (message, error = false) => { $("designStatus").textContent = message; $("designStatus").classList.toggle("is-error", error); };
   function setBusy(value) {
     busy = value;
-    ["designFile", "designDrop", "designReplace", "designTarget"].forEach((id) => { $(id).disabled = value; });
+    ["designFile", "designDrop", "designReplace", "designTarget", "designMode"].forEach((id) => { $(id).disabled = value; });
     $("designConvert").disabled = value || !ready || hasBlockers();
-    $("designConvert").textContent = value ? "处理中…" : ready && hasBlockers() ? "暂不支持完整转换" : "开始转换";
+    $("designConvert").textContent = value ? "处理中…" : ready && hasBlockers() ? "暂不支持完整转换" : compatibleMode() ? "开始兼容转换" : "开始转换";
     $("designCancel").hidden = !value;
   }
   function clearResult() {
@@ -58,7 +60,7 @@ export function mountDesignWorkspace(root, on) {
   function showIssues(issues) {
     $("designIssues").replaceChildren(...issues.map((issue) => {
       const item = document.createElement("li");
-      const category = issue.severity === "info" ? "说明" : issue.category === "format" ? "目标格式限制" : "转换器尚未适配";
+      const category = issue.category === "compatibility" ? "兼容重建" : issue.severity === "info" ? "说明" : issue.category === "format" ? "目标格式限制" : "转换器尚未适配";
       item.textContent = `${category}：${issue.message}（${issue.count} 项）${issue.examples.length ? ` 例如：${issue.examples.join("、")}` : ""}`;
       return item;
     }));
@@ -66,13 +68,14 @@ export function mountDesignWorkspace(root, on) {
     $("designReport").hidden = false;
   }
   function showCompatibility() {
+    $("designModeControl").hidden = $("designTarget").value !== "xd";
     showIssues(currentIssues());
-    setStatus(hasBlockers() ? `当前文件尚不能完整转换为 ${formatNames[$("designTarget").value]}，请查看下方适配情况。未生成不完整文件。` : "未检测到已知不兼容项，可以开始转换。");
+    setStatus(hasBlockers() ? `当前文件尚不能完整转换为 ${formatNames[$("designTarget").value]}，请查看下方适配情况。未生成不完整文件。` : compatibleMode() ? "可以开始兼容转换。下方列出的效果会重建，并保留源图层和参数备份。" : "未检测到已知不兼容项，可以开始转换。");
     setBusy(false);
   }
   async function choose(nextFile) {
     if (!nextFile || busy) return;
-    stop(); clearResult(); ready = false; compatibility = {};
+    stop(); clearResult(); ready = false; compatibility = {}; compatible = {};
     file = nextFile;
     $("designFile").value = "";
     if (previewURL) URL.revokeObjectURL(previewURL);
@@ -96,12 +99,12 @@ export function mountDesignWorkspace(root, on) {
         if (data.type === "progress") { watch(); setStatus(data.message); }
         else if (data.type === "error") {
           if (data.code === "PRESERVATION_REQUIRED") {
-            compatibility[$("designTarget").value] = data.issues || [];
+            (compatibleMode() ? compatible : compatibility)[$("designTarget").value] = data.issues || [];
             clearTimeout(timer); setBusy(false); setStatus(data.message, true); showIssues(currentIssues());
           } else fail(`无法处理：${data.message}`);
         }
         else if (data.type === "ready") {
-          clearTimeout(timer); ready = true; compatibility = data.compatibility || {};
+          clearTimeout(timer); ready = true; compatibility = data.compatibility || {}; compatible = data.compatible || {};
           $("designFilename").textContent = file.name;
           $("designSourceInfo").textContent = `${formatNames[data.source]} · ${size(file.size)} · ${data.stats.pages} 页 · ${data.stats.layers} 个图层 · ${data.stats.images} 张图片`;
           for (const option of $("designTarget").options) option.disabled = option.value === data.source;
@@ -118,9 +121,10 @@ export function mountDesignWorkspace(root, on) {
           resultURL = URL.createObjectURL(blob);
           const link = $("designDownload"); link.href = resultURL; link.download = data.filename; link.textContent = `下载 ${formatNames[data.target]}`;
           $("designResultInfo").textContent = `${data.filename} · ${size(blob.size)} · ${data.stats.layers} 个源图层`;
+          $("designResultTitle").textContent = data.mode === "compatible" ? "兼容设计文件已生成（含源图层备份）" : "设计文件已生成";
           $("designResult").hidden = false;
           showIssues(data.issues);
-          setStatus("设计文件已生成，仍需在目标软件中核对外观。");
+          setStatus(data.mode === "compatible" ? "整稿兼容文件已生成，请核对下方重建项目和目标软件中的外观。" : "设计文件已生成，仍需在目标软件中核对外观。");
         }
       };
       worker.postMessage({ type: "read", buffer, filename: file.name }, [buffer]);
@@ -133,7 +137,8 @@ export function mountDesignWorkspace(root, on) {
   on($("designWorkspace"), "dragleave", (event) => { if (!$("designWorkspace").contains(event.relatedTarget)) $("designDrop").classList.remove("is-dragging"); });
   on($("designWorkspace"), "drop", (event) => { event.preventDefault(); $("designDrop").classList.remove("is-dragging"); if (!busy) { if (event.dataTransfer.files.length !== 1) return setStatus("每次请选择一个设计文件。", true); choose(event.dataTransfer.files[0]); } });
   on($("designTarget"), "change", () => { clearResult(); if (ready) showCompatibility(); else setStatus("请先选择设计文件。"); });
-  on($("designConvert"), "click", () => { if (!ready || busy || !worker || hasBlockers()) return; clearResult(); setBusy(true); watch(); worker.postMessage({ type: "convert", target: $("designTarget").value }); });
+  on($("designMode"), "change", () => { clearResult(); if (ready) showCompatibility(); });
+  on($("designConvert"), "click", () => { if (!ready || busy || !worker || hasBlockers()) return; clearResult(); setBusy(true); watch(); worker.postMessage({ type: "convert", target: $("designTarget").value, mode: compatibleMode() ? "compatible" : "strict" }); });
   on($("designCancel"), "click", () => { stop(); ready = false; setBusy(false); setStatus("已取消处理，请重新选择文件。"); });
   return () => { disposed = true; stop(); clearResult(); if (previewURL) URL.revokeObjectURL(previewURL); file = null; };
 }

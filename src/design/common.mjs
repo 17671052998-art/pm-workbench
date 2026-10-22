@@ -266,7 +266,7 @@ export function decodePath(blob) {
   const parts = [];
   while (offset < blob.length) {
     const cmd = blob[offset++];
-    if (cmd === 0) { parts.push("Z"); continue; }
+    if (cmd === 0) { if (parts.length) parts.push("Z"); continue; }
     const count = { 1: 2, 2: 2, 3: 4, 4: 6 }[cmd];
     if (!count || offset + count * 4 > blob.length) throw new Error("无法读取矢量轮廓。");
     const values = Array.from({ length: count }, (_, i) => view.getFloat32(offset + i * 4, true) * (i % 2 ? -1 : 1));
@@ -277,7 +277,15 @@ export function decodePath(blob) {
 }
 
 export function nodePath(node) {
-  if (node.fillGeometry.length) return node.fillGeometry.map((g) => decodePath(g.commandsBlob)).join(" ");
+  if (node.fillGeometry.length) {
+    const path = node.fillGeometry.map((g) => decodePath(g.commandsBlob)).join(" ");
+    if (node.source?.format === "fig" && node.height > 0) {
+      const bounds = pathBounds(path);
+      // Native Figma caches may store positive-down bytes unlike our encoded paths.
+      if (bounds.y < -0.01 && bounds.y + bounds.height <= 0.01) return decodePath(vectorProps(svgpath(path).scale(1, -1).toString()).fillGeometry[0].commandsBlob);
+    }
+    return path;
+  }
   if (node.type === "STAR" || node.type === "POLYGON") {
     const count = Math.max(3, Math.min(1000, node.pointCount || 5));
     const total = node.type === "STAR" ? count * 2 : count;
@@ -344,7 +352,7 @@ export function fontWeight(name = "") {
 
 export const fontStyle = (weight, italic) => `${weight >= 800 ? "Heavy" : weight >= 700 ? "Bold" : weight >= 600 ? "Semibold" : weight >= 500 ? "Medium" : weight <= 300 ? "Light" : "Regular"}${italic ? " Italic" : ""}`;
 
-export function targetReport(graph, target, report) {
+export function targetReport(graph, target, report, compatibility = {}) {
   for (const node of graph.nodes.values()) {
     if (node.type === "CANVAS" || node.id === graph.rootId) continue;
     if (["COMPONENT", "COMPONENT_SET", "INSTANCE"].includes(node.type) && target !== "fig" && (target !== "xd" || !xdStandaloneComponent(graph, node))) report.add("component-expanded", "尚未实现此组件、状态或实例关联的等价映射。", node.name);
@@ -355,7 +363,8 @@ export function targetReport(graph, target, report) {
       if (target !== "fig" && fill.type === "IMAGE" && (hasImageTransform(fill) || ["CROP", "STRETCH"].includes(fill.imageScaleMode)) && (target !== "xd" || !xdImageTransform(node, fill, imageDimensions(graph.images.get(fill.imageHash))))) report.add("image-crop", "此图片裁剪或局部变换尚不能等价转换。", node.name);
     }
     if (target !== "fig" && node.isMask && (target !== "xd" || !xdMaskSupported(graph, node))) {
-      if (target === "xd" && node.maskType !== "VECTOR" && maskNeedsTransparency(graph, node)) report.add("mask", "此蒙版使用透明度或明暗变化；XD 的形状裁切不能直接保留此透明蒙版行为。", node.name, "warning", "format");
+      if (target === "xd" && compatibility.mask?.(graph, node)) report.add("xd-compatible-mask", "透明蒙版将写入各图片透明通道；原图、原始图层和蒙版参数保留备份，不合成整页。", node.name, "info", "compatibility");
+      else if (target === "xd" && node.maskType !== "VECTOR" && maskNeedsTransparency(graph, node)) report.add("mask", "此蒙版使用透明度或明暗变化；XD 的形状裁切不能直接保留此透明蒙版行为。", node.name, "warning", "format");
       else report.add("mask", "尚未实现此分组、描边或特殊蒙版的等价映射。", node.name);
     }
     if (node.clipsContent && graph.getNode(node.parentId)?.type !== "CANVAS" && target !== "fig" && target !== "xd") report.add("nested-clip", "嵌套画框的裁切范围可能发生变化，请检查溢出内容。", node.name);
@@ -365,8 +374,14 @@ export function targetReport(graph, target, report) {
     if (target !== "fig" && node.strokes.some((stroke) => String(stroke.cap || node.strokeCap).startsWith("ARROW"))) report.add("arrow-cap", "箭头端点尚不能等价转换。", node.name);
     if (target === "sketch" && node.effects.filter((effect) => effect.type.includes("BLUR")).length > 1) report.add("multiple-blurs", "Sketch 导出目前只能保留一个模糊效果。", node.name);
     if (target === "xd" && node.effects.some((effect) => effect.blendMode && effect.blendMode !== "NORMAL")) report.add("xd-effect-blend", "此效果的混合模式尚不能等价导出到 XD。", node.name);
-    if (target === "xd" && node.effects.some((effect) => effect.spread)) report.add("xd-shadow-spread", "XD 原生阴影没有可等价承接的扩展参数。", node.name, "warning", "format");
-    if (target === "xd" && node.type === "TEXT" && node.fills.some((fill) => fill.type !== "SOLID")) report.add("xd-text-paint", "XD 可编辑文字只支持纯色填充，无法同时保留文字编辑能力和此图片或渐变填充。", node.name, "warning", "format");
+    if (target === "xd" && node.effects.some((effect) => effect.spread)) {
+      if (compatibility.shadow?.(node)) report.add("xd-compatible-shadow", "阴影扩展将重建为局部透明效果图层，保留可编辑原形状、原始图层及效果参数备份。", node.name, "info", "compatibility");
+      else report.add("xd-shadow-spread", "XD 原生阴影没有可等价承接的扩展参数。", node.name, "warning", "format");
+    }
+    if (target === "xd" && node.type === "TEXT" && node.fills.some((fill) => fill.type !== "SOLID")) {
+      if (compatibility.text?.(node)) report.add("xd-compatible-text", "复杂文字填充按原稿字形重建为可编辑矢量外观，同时保留可编辑文字和填充参数备份；修改文字后需重新转换外观。", node.name, "info", "compatibility");
+      else report.add("xd-text-paint", "XD 可编辑文字只支持纯色填充，无法同时保留文字编辑能力和此图片或渐变填充。", node.name, "warning", "format");
+    }
     if (target === "xd" && node.type === "TEXT" && !xdTextRunsSupported(node)) report.add("xd-text-runs", "此文字包含尚不能等价保留的局部样式，例如局部行高、字体特性或复杂填充。", node.name);
   }
 }
