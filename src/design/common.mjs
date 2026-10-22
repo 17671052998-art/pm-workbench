@@ -48,12 +48,13 @@ export function createGraph() {
 export function createReport() {
   const issues = new Map();
   return {
-    add(code, message, name = "", severity = "warning") {
-      const issue = issues.get(code) || { code, message, count: 0, examples: [], severity };
+    add(code, message, name = "", severity = "warning", category = "implementation") {
+      const key = `${code}:${category}`;
+      const issue = issues.get(key) || { code, message, count: 0, examples: [], severity, category };
       if (severity !== "info") issue.severity = severity;
       issue.count++;
       if (name && issue.examples.length < 3 && !issue.examples.includes(name)) issue.examples.push(name.slice(0, 100));
-      issues.set(code, issue);
+      issues.set(key, issue);
     },
     list() { return [...issues.values()]; },
   };
@@ -163,6 +164,23 @@ export function xdMaskSupported(graph, node, mode = node.maskType) {
     const colors = fill.type === "SOLID" ? [fill.color] : fill.type.startsWith("GRADIENT") ? (fill.gradientStops || []).map((stop) => stop.color) : [];
     return fill.opacity === 1 && colors.length > 0 && colors.every((c) => c.a === 1 && (mode !== "LUMINANCE" || c.r === 1 && c.g === 1 && c.b === 1));
   });
+}
+
+function maskNeedsTransparency(graph, node, mode = node.maskType) {
+  if (node.opacity < 1) return true;
+  // Plain groups do not render their own paints; inspect their visible children instead.
+  const paints = node.type === "GROUP" ? [] : [...node.fills, ...node.strokes].filter((fill) => fill.visible);
+  for (const fill of paints) {
+    if (fill.opacity < 1) return true;
+    const colors = fill.type === "SOLID" ? [fill.color] : fill.gradientStops?.map((stop) => stop.color) || [];
+    if (colors.some((color) => color.a < 1)) return true;
+    if (mode === "LUMINANCE") {
+      const brightness = colors.map((color) => 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b);
+      if (brightness.some((value) => value > 1e-6 && value < 1 - 1e-6)) return true;
+      if (fill.type.startsWith("GRADIENT") && brightness.some((value) => Math.abs(value - brightness[0]) > 1e-6)) return true;
+    }
+  }
+  return graph.getChildren(node.id).filter((child) => child.visible).some((child) => maskNeedsTransparency(graph, child, mode));
 }
 
 export function normalizePath(d) {
@@ -281,13 +299,16 @@ export function targetReport(graph, target, report) {
   for (const node of graph.nodes.values()) {
     if (node.type === "CANVAS" || node.id === graph.rootId) continue;
     if (["COMPONENT", "COMPONENT_SET", "INSTANCE"].includes(node.type) && target !== "fig") report.add("component-expanded", "组件按当前外观展开为可编辑分组，主实例关联不保留。", node.name);
-    if (node.layoutMode !== "NONE" && target !== "fig") report.add("layout-fixed", "自动布局转换为当前固定位置。", node.name);
+    if (node.layoutMode !== "NONE" && target !== "fig") report.add("layout-fixed", "尚未实现此自动布局的等价映射；固定位置不能保留原有自动排版规则。", node.name);
     for (const fill of [...node.fills, ...node.strokes]) {
       if (target !== "fig" && !["SOLID", "IMAGE", "GRADIENT_LINEAR", "GRADIENT_RADIAL"].includes(fill.type)) report.add("paint-approximation", "目标格式尚未实现此填充类型的等价转换。", node.name);
       if (target === "xd" && fill.type === "GRADIENT_RADIAL") report.add("xd-radial-gradient", "径向渐变尚不能等价导出到 XD。", node.name);
       if (target !== "fig" && fill.type === "IMAGE" && (hasImageTransform(fill) || ["CROP", "STRETCH"].includes(fill.imageScaleMode)) && (target !== "xd" || !xdImageTransform(node, fill, imageDimensions(graph.images.get(fill.imageHash))))) report.add("image-crop", "此图片裁剪或局部变换尚不能等价转换。", node.name);
     }
-    if (target !== "fig" && node.isMask && (target !== "xd" || !xdMaskSupported(graph, node))) report.add("mask", "此蒙版包含透明渐变、明暗变化或其他尚不能等价转换的属性。", node.name);
+    if (target !== "fig" && node.isMask && (target !== "xd" || !xdMaskSupported(graph, node))) {
+      if (target === "xd" && node.maskType !== "VECTOR" && maskNeedsTransparency(graph, node)) report.add("mask", "此蒙版使用透明度或明暗变化；XD 的形状裁切不能直接保留此透明蒙版行为。", node.name, "warning", "format");
+      else report.add("mask", "尚未实现此分组、描边或特殊蒙版的等价映射。", node.name);
+    }
     if (node.clipsContent && graph.getNode(node.parentId)?.type !== "CANVAS" && target !== "fig" && target !== "xd") report.add("nested-clip", "嵌套画框的裁切范围可能发生变化，请检查溢出内容。", node.name);
     if (target === "xd" && node.type === "BOOLEAN_OPERATION" && !nodePath(node)) report.add("boolean", "此布尔运算缺少可导出的合成轮廓，不能保证外观。", node.name);
     if (["CONNECTOR", "SHAPE_WITH_TEXT"].includes(node.type)) report.add("special-node", "部分特殊图层仅保留可读取的子图层和基础外观。", node.name);
@@ -295,8 +316,8 @@ export function targetReport(graph, target, report) {
     if (target !== "fig" && node.strokes.some((stroke) => String(stroke.cap || node.strokeCap).startsWith("ARROW"))) report.add("arrow-cap", "箭头端点尚不能等价转换。", node.name);
     if (target === "sketch" && node.effects.filter((effect) => effect.type.includes("BLUR")).length > 1) report.add("multiple-blurs", "Sketch 导出目前只能保留一个模糊效果。", node.name);
     if (target === "xd" && node.effects.some((effect) => effect.blendMode && effect.blendMode !== "NORMAL")) report.add("xd-effect-blend", "此效果的混合模式尚不能等价导出到 XD。", node.name);
-    if (target === "xd" && node.effects.some((effect) => effect.spread)) report.add("xd-shadow-spread", "XD 阴影扩展参数尚不能保证等价保留。", node.name);
-    if (target === "xd" && node.type === "TEXT" && node.fills.some((fill) => fill.type !== "SOLID")) report.add("xd-text-paint", "XD 可编辑文字不支持等价保留此图片或渐变填充。", node.name);
+    if (target === "xd" && node.effects.some((effect) => effect.spread)) report.add("xd-shadow-spread", "XD 原生阴影没有可等价承接的扩展参数。", node.name, "warning", "format");
+    if (target === "xd" && node.type === "TEXT" && node.fills.some((fill) => fill.type !== "SOLID")) report.add("xd-text-paint", "XD 可编辑文字只支持纯色填充，无法同时保留文字编辑能力和此图片或渐变填充。", node.name, "warning", "format");
     if (target === "xd" && node.type === "TEXT" && !xdTextRunsSupported(node)) report.add("xd-text-runs", "此文字包含尚不能等价保留的局部样式，例如局部行高、字体特性或复杂填充。", node.name);
   }
 }

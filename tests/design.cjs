@@ -159,7 +159,7 @@ async function main() {
     await page.locator("#designFile").setInputFiles({ name: "sample.sketch", mimeType: "application/octet-stream", buffer: Buffer.from(source) });
     await page.waitForFunction(() => !document.querySelector("#designConvert").disabled);
     assert.match(await page.locator("#designSourceInfo").textContent(), /6 个图层 · 1 张图片/);
-    assert.equal(await page.locator("#designStrict").isChecked(), true);
+    assert.equal(await page.locator("#designStrict").count(), 0);
     for (const target of ["fig", "xd"]) {
       await page.locator("#designTarget").selectOption(target);
       await page.locator("#designConvert").click();
@@ -190,18 +190,32 @@ async function main() {
     await page.locator("#designFile").setInputFiles({ name: "mask.sketch", mimeType: "application/octet-stream", buffer: Buffer.from(maskSource) });
     await page.waitForFunction(() => !document.querySelector("#designConvert").disabled);
     await page.locator("#designTarget").selectOption("xd");
-    await page.locator("#designConvert").click();
-    await page.waitForFunction(() => document.querySelector("#designStatus").classList.contains("is-error"));
+    assert.equal(await page.locator("#designConvert").isDisabled(), true);
+    assert.match(await page.locator("#designConvert").textContent(), /暂不支持完整转换/);
     assert.match(await page.locator("#designIssues").textContent(), /蒙版/);
+    assert.match(await page.locator("#designIssues").textContent(), /目标格式限制/);
+    assert.match(await page.locator("#designStatus").textContent(), /尚不能完整转换/);
     assert.equal(await page.locator("#designResult").isVisible(), false);
-    assert.equal(await page.locator("#designConvert").isDisabled(), false);
-    await page.locator("#designStrict").uncheck();
-    await page.locator("#designConvert").click();
-    await page.locator("#designResult").waitFor({ state: "visible" });
-    assert.match(await page.locator("#designStatus").textContent(), /兼容模式/);
-    await page.locator("#designStrict").check();
-    assert.equal(await page.locator("#designResult").isVisible(), false);
+    await page.screenshot({ path: "/tmp/pm-workbench-design-preflight.png", fullPage: true });
+    const bypass = await page.evaluate((bytes) => new Promise((resolve, reject) => {
+      const worker = new Worker(new URL("assets/design-worker.js", document.baseURI));
+      const timeout = setTimeout(() => { worker.terminate(); reject(new Error("worker preservation check timed out")); }, 15000);
+      worker.onmessage = ({ data }) => {
+        if (data.type === "ready") worker.postMessage({ type: "convert", target: "xd", strict: false });
+        if (data.type === "error" || data.type === "done") { clearTimeout(timeout); worker.terminate(); resolve({ type: data.type, code: data.code }); }
+      };
+      const buffer = new Uint8Array(bytes).buffer;
+      worker.postMessage({ type: "read", filename: "mask.sketch", buffer }, [buffer]);
+    }), [...maskSource]);
+    assert.deepEqual(bypass, { type: "error", code: "PRESERVATION_REQUIRED" });
+    await page.locator("#designFile").setInputFiles({ name: "mask-reload.sketch", mimeType: "application/octet-stream", buffer: Buffer.from(maskSource) });
+    await page.waitForFunction(() => document.querySelector("#designFilename").textContent === "mask-reload.sketch");
+    assert.equal(await page.locator("#designConvert").isDisabled(), true);
+    assert.equal(await page.locator("#designTarget").isDisabled(), false);
+    assert.equal(await page.locator("#designReplace").isDisabled(), false);
+    assert.match(await page.locator("#designIssues").textContent(), /目标格式限制/);
     await page.locator("#designTarget").selectOption("fig");
+    assert.equal(await page.locator("#designConvert").isDisabled(), false);
     await page.locator("#designConvert").click();
     await page.locator("#designResult").waitFor({ state: "visible" });
     const largeFilename = path.join(largeDirectory, "large.sketch");

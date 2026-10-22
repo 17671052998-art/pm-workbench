@@ -5,7 +5,7 @@ const { unzipSync, strFromU8 } = require("fflate");
 
 module.exports = async function testFidelity() {
   const { createGraph, addNode, addImage, solid, color, vectorProps, stats, EMPTY_PNG, nodePath, imageDimensions } = await import("../src/design/common.mjs");
-  const { readDesign, convertDesign } = await import("../src/design/convert.mjs");
+  const { readDesign, convertDesign, inspectDesign } = await import("../src/design/convert.mjs");
   const graph = createGraph();
   assert.deepEqual(imageDimensions(EMPTY_PNG), { width: 1, height: 1 });
   const jpegHeader = Uint8Array.of(0xff, 0xd8, 0xff, 0xe0, 0, 4, 0, 0, 0xff, 0xc2, 0, 8, 8, 0, 80, 0, 160, 0);
@@ -127,14 +127,21 @@ module.exports = async function testFidelity() {
   gradient.isMask = true;
   const image = card.fills[1];
   image.imageTransform = { m00: 0, m01: 0, m02: 0.1, m10: 0, m11: 1, m12: 0 };
+  const inspection = inspectDesign(parsed, "xd");
+  assert.equal(inspection.find((issue) => issue.code === "mask").category, "format");
+  assert.equal(inspection.find((issue) => issue.code === "image-crop").category, "implementation");
+  const binaryMask = addNode(graph, "GROUP", board.id, { name: "Binary mask", isMask: true, maskType: "LUMINANCE" });
+  addNode(graph, "RECTANGLE", binaryMask.id, { width: 20, height: 20, fills: [solid(color(1, 1, 1))] });
+  addNode(graph, "RECTANGLE", binaryMask.id, { width: 5, height: 5, fills: [solid(color())] });
+  assert.deepEqual(inspectDesign(parsed, "xd").filter((issue) => issue.code === "mask").map((issue) => issue.category).sort(), ["format", "implementation"], "binary group masks are converter gaps, not a native alpha-mask restriction");
+  graph.deleteNode(binaryMask.id);
   await assert.rejects(convertDesign(parsed, "xd"), (error) => {
     assert.equal(error.code, "PRESERVATION_REQUIRED");
     assert.ok(error.issues.some((issue) => issue.code === "mask"));
     assert.ok(error.issues.some((issue) => issue.code === "image-crop"));
     return true;
   });
-  const compatible = await convertDesign(parsed, "xd", { strict: false });
-  assert.ok(compatible.issues.some((issue) => issue.severity === "warning"));
+  await assert.rejects(convertDesign(parsed, "xd", { strict: false }), (error) => error.code === "PRESERVATION_REQUIRED", "legacy bypass flags must not produce incomplete files");
   delete image.imageTransform;
   gradient.isMask = false;
   const skipped = addNode(graph, "RECTANGLE", card.id, { name: "Unexpected child", width: 5, height: 5 });
@@ -142,5 +149,5 @@ module.exports = async function testFidelity() {
   graph.deleteNode(skipped.id);
   await fs.writeFile("/tmp/pm-workbench-native-fidelity.xd", result.bytes);
   await fs.writeFile("/tmp/pm-workbench-native-fidelity.sketch", sketch.bytes);
-  console.log("PASS: canonical native XD opacity, gradient, shadow, paint stacks, corners, hidden layers and editable Boolean operands; Sketch attributes and internal pages retained; known losses blocked by default.");
+  console.log("PASS: canonical native XD opacity, gradient, shadow, paint stacks, corners, hidden layers and editable Boolean operands; preflight separates converter gaps from target restrictions and cannot bypass known losses.");
 };
