@@ -4,6 +4,7 @@ import { linearGradientTransform, ellipticalGradientTransform, gradientPoint } f
 import { createGraph, addNode, addImage, jsonEntry, unpack, finite, color, solid, fontWeight, fontStyle, uid, encoder, vectorProps, nodePath, pathBounds, transformProps, xdMatrix, EMPTY_PNG, scaleTree, reportMissingLayers, imageDimensions, hasImageTransform, xdImageTransform, xdMaskSupported, xdResponsivePair, xdVectorMaskPlan, xdStandaloneComponent } from "./common.mjs";
 import { vectorMaskPath } from "./pathops.mjs";
 import { prepareXDCompatibility } from "./xd-compat.mjs";
+import { xdTextLayout } from "./xd-text-layout.mjs";
 
 function readColor(c = {}) {
   if (typeof c.value === "number") return color((c.value >>> 16 & 255) / 255, (c.value >>> 8 & 255) / 255, (c.value & 255) / 255, (c.value >>> 24) / 255);
@@ -107,7 +108,9 @@ export async function readXD(bytes, report) {
       const lines = (text.paragraphs || []).flatMap((p) => p.lines || []).flat();
       const size = finite(font.size, 14);
       const first = lines[0] || {};
-      ox = finite(first.x); oy = finite(first.y) - size * 0.8;
+      const anchor = raw.meta?.ux?.orbitTextLayout?.anchor;
+      ox = anchor ? -anchor.x : raw.meta?.ux?.orbitTextLayout ? 0 : finite(first.x);
+      oy = anchor ? -anchor.y : raw.meta?.ux?.orbitTextLayout ? 0 : finite(first.y) - size * 0.8;
       w = finite(text.frame?.width, Math.max(1, ...String(text.rawText || "").split("\n").map((line) => line.length * size * 0.6)));
       h = finite(text.frame?.height, Math.max(1, (text.paragraphs || []).flatMap((p) => p.lines || []).length) * size * 1.2);
     }
@@ -149,6 +152,11 @@ export async function readXD(bytes, report) {
       return (list || [effect.params || {}]).map((params) => ({ type: effect.type === "dropShadow" ? "DROP_SHADOW" : effect.type === "uxdesign#innerShadow" ? "INNER_SHADOW" : params.backgroundEffect ? "BACKGROUND_BLUR" : "LAYER_BLUR", color: readColor(params.color), radius: list ? finite(params.r) * 2 : finite(params.blurAmount ?? params.r ?? params.blur), spread: finite(params.spread), offset: { x: finite(params.dx ?? params.x), y: finite(params.dy ?? params.y) }, visible: effect.visible !== false }));
     });
     const node = addNode(graph, type, parent, props);
+    if (type === "TEXT" && raw.meta?.ux?.orbitTextLayout) {
+      const layout = raw.meta.ux.orbitTextLayout;
+      Object.assign(node, { textAlignVertical: layout.textAlignVertical || "TOP", textAutoResize: layout.textAutoResize || "NONE", paragraphSpacing: finite(layout.paragraphSpacing) });
+      node.source.xdTextLayout = { text: node.text, width: node.width, height: node.height, layout: { lineHeight: node.lineHeight, origin: layout.origin, paragraphs: layout.paragraphs || text.paragraphs.map((paragraph) => ({ lines: paragraph.lines.map((runs) => ({ from: runs[0]?.from || 0, to: runs.at(-1)?.to || 0, x: finite(runs[0]?.x), y: finite(runs[0]?.y) })) })) } };
+    }
     if (!['artboard', 'group', 'shape', 'text'].includes(raw.type)) report.add("xd-node", "部分 XD 专属图层按基础图形转换。", raw.name);
     if (raw.meta?.ux?.interactions?.length) report.add("prototype", "原型交互暂不参与格式转换。", raw.name);
     const maskSource = childrenOf(raw).find((child) => child.id === raw.meta?.ux?.orbitVectorMaskSource);
@@ -375,21 +383,47 @@ export async function writeXD(graph, name, thumbnail, report, options = {}) {
       report.add("xd-image-crop", "图片原始资源与裁剪变换已保留为可编辑的图片和裁切形状。", node.name, "info");
     } else if (node.type === "TEXT") {
       value.type = "text";
+      const layout = xdTextLayout(node);
+      const firstLine = layout.paragraphs[0]?.lines[0] || { x: 0, y: 0 };
+      const alignment = node.textAlignHorizontal === "CENTER" ? 0.5 : node.textAlignHorizontal === "RIGHT" ? 1 : 0;
+      const anchor = { x: firstLine.x + alignment * (firstLine.width ?? node.width), y: firstLine.y };
+      // Positioned XD text is anchored at its first baseline, not at the Figma box top.
+      value.transform.tx += transform.a * anchor.x + transform.c * anchor.y;
+      value.transform.ty += transform.b * anchor.x + transform.d * anchor.y;
       Object.assign(value.style, writeTextStyle(node));
-      Object.assign(value.style.textAttributes, { textAlign: node.textAlignHorizontal.toLowerCase(), paragraphAfterSpacing: node.paragraphSpacing, lineHeight: node.lineHeight || node.fontSize * 1.2 });
+      Object.assign(value.style.textAttributes, { textAlign: node.textAlignHorizontal.toLowerCase(), paragraphAfterSpacing: node.paragraphSpacing, lineHeight: layout.lineHeight });
+      value.meta.ux.orbitTextLayout = { origin: layout.origin, anchor, paragraphs: layout.paragraphs, textAlignVertical: node.textAlignVertical, textAutoResize: node.textAutoResize, paragraphSpacing: node.paragraphSpacing };
       const ranges = textRanges(node);
       value.meta.ux.singleTextObject = true;
       value.meta.ux.rangedStyles = ranges.map(({ from, to, node: run }) => {
         const native = writeTextStyle(run), fill = run.fills.at(-1);
         return { length: to - from, fontFamily: run.fontFamily, fontStyle: native.font.style, fontSize: run.fontSize, charSpacing: native.textAttributes.letterSpacing, underline: run.textDecoration === "UNDERLINE", strikethrough: run.textDecoration === "STRIKETHROUGH", textTransform: native.textAttributes.textTransform, textScript: "none", fill: writeRangeColor(fill?.color ? { ...fill.color, a: fill.color.a * fill.opacity } : { r: 0, g: 0, b: 0, a: 1 }) };
       });
-      let from = 0;
-      value.text = { frame: { type: "positioned", width: node.width, height: node.height }, rawText: node.text, paragraphs: node.text.split("\n").map((line, index) => {
-        const start = from, end = start + line.length;
-        from = end + 1;
-        const runs = ranges.filter((range) => range.from < end && range.to > start).map((range, i) => ({ from: Math.max(start, range.from), to: Math.min(end, range.to), ...(i === 0 ? { x: 0 } : {}), y: node.fontSize * 0.8 + index * (node.lineHeight || node.fontSize * 1.2), style: { ...writeTextStyle(range.node), fill: paint(range.node.fills.at(-1), range.node) } }));
-        return { lines: [runs.length ? runs : [{ from: start, to: end, x: 0, y: node.fontSize * 0.8 + index * (node.lineHeight || node.fontSize * 1.2) }]] };
-      }) };
+      value.text = { frame: { type: "positioned", width: node.width, height: node.height }, rawText: node.text, paragraphs: layout.paragraphs.map((paragraph) => ({ lines: paragraph.lines.map((line) => {
+        const runs = ranges.filter((range) => range.from < line.to && range.to > line.from).map((range, i) => {
+          const from = Math.max(line.from, range.from), offset = layout.characterOffsets?.[from];
+          return { from, to: Math.min(line.to, range.to), ...(i === 0 ? { x: line.x - anchor.x } : Number.isFinite(offset) ? { x: line.x + offset - anchor.x } : {}), y: line.y - anchor.y, style: { ...writeTextStyle(range.node), fill: paint(range.node.fills.at(-1), range.node) } };
+        });
+        return runs.length ? runs : [{ from: line.from, to: line.to, x: line.x - anchor.x, y: line.y - anchor.y }];
+      }) })) };
+      const lines = layout.paragraphs.flatMap((paragraph) => paragraph.lines);
+      if (layout.origin !== "estimated" && lines.length > 1) {
+        const backup = { ...value, id: uid(), name: `${node.name} / 完整原文备份（隐藏）`, visible: false, transform: { a: 1, b: 0, c: 0, d: 1, tx: anchor.x, ty: anchor.y }, style: { ...value.style, opacity: 1, blendMode: "normal", filters: [] } };
+        const editable = lines.map((line, index) => {
+          const text = node.text.slice(line.from, line.to);
+          const part = { ...localPaintNode(node, `${node.name} / 第 ${index + 1} 行`, node.fills, node.strokes), text, textAlignHorizontal: "LEFT", styleRuns: node.styleRuns.filter((run) => run.start < line.to && run.start + run.length > line.from).map((run) => ({ ...run, start: Math.max(line.from, run.start) - line.from, length: Math.min(line.to, run.start + run.length) - Math.max(line.from, run.start) })) };
+          part.source = { ...node.source, xdTextLayout: { text, width: part.width, height: part.height, layout: { origin: "saved-line", lineHeight: layout.lineHeight, paragraphs: [{ lines: [{ ...line, from: 0, to: text.length }] }] } } };
+          return layer(part);
+        });
+        value.type = "group";
+        value.transform = xdMatrix(node); value.transform.tx += extraX; value.transform.ty += extraY;
+        value.style = style(node); value.style.fill = value.style.stroke = { type: "none" };
+        value.meta.ux.orbitTextLines = true;
+        value.group = { children: [backup, ...editable] };
+        delete value.text;
+        keepBounds(value, node);
+        report.add("xd-text-lines", "多行文字按原稿逐行位置保留为可编辑文字分组，避免 XD 重新排版改变换行和基线；完整原文保留在隐藏备份中。", node.name, "info");
+      }
     } else if (node.type === "BOOLEAN_OPERATION") {
       value.shape = { type: "compound", path: nodePath(node), operation: String(node.booleanOperation || "UNION").toLowerCase(), children: graph.getChildren(node.id).map((child) => layer(child)) };
     } else if (["ELLIPSE"].includes(node.type)) value.shape = { type: "ellipse", cx: node.width / 2, cy: node.height / 2, rx: node.width / 2, ry: node.height / 2 };

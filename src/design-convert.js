@@ -1,5 +1,5 @@
 const designWorkerURL = new URL("./design-worker.js", document.currentScript.src);
-designWorkerURL.search = "v=design-compatible-5";
+designWorkerURL.search = "v=design-text-baselines-6";
 const formatNames = { fig: "Figma (.fig)", sketch: "Sketch (.sketch)", xd: "Adobe XD (.xd)" };
 
 export function renderDesignWorkspace() {
