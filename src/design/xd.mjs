@@ -1,16 +1,42 @@
 import { zipSync } from "fflate";
 import svgpath from "svgpath";
 import { linearGradientTransform, ellipticalGradientTransform, gradientPoint } from "@open-pencil/scene-graph/gradient";
-import { createGraph, addNode, addImage, jsonEntry, unpack, finite, color, solid, fontWeight, fontStyle, uid, encoder, vectorProps, nodePath, pathBounds, transformProps, xdMatrix, EMPTY_PNG, scaleTree, reportMissingLayers, imageDimensions } from "./common.mjs";
+import { createGraph, addNode, addImage, jsonEntry, unpack, finite, color, solid, fontWeight, fontStyle, uid, encoder, vectorProps, nodePath, pathBounds, transformProps, xdMatrix, EMPTY_PNG, scaleTree, reportMissingLayers, imageDimensions, hasImageTransform, xdImageTransform, xdMaskSupported } from "./common.mjs";
 
 function readColor(c = {}) {
   if (typeof c.value === "number") return color((c.value >>> 16 & 255) / 255, (c.value >>> 8 & 255) / 255, (c.value & 255) / 255, (c.value >>> 24) / 255);
   return color((c.value?.r ?? c.r ?? 0) / 255, (c.value?.g ?? c.g ?? 0) / 255, (c.value?.b ?? c.b ?? 0) / 255, c.alpha ?? 1);
 }
 const writeColor = (c) => ({ mode: "RGB", value: { r: Math.round(c.r * 255), g: Math.round(c.g * 255), b: Math.round(c.b * 255) }, alpha: c.a });
+const writeRangeColor = (c) => ({ value: ((Math.round(c.a * 255) << 24) | (Math.round(c.r * 255) << 16) | (Math.round(c.g * 255) << 8) | Math.round(c.b * 255)) >>> 0 });
 const childrenOf = (node) => node.children || node.artboard?.children || node.group?.children || node.shape?.children || [];
 const readBlend = (value) => String(value || "normal").replace(/-/g, "_").toUpperCase();
 const writeBlend = (value) => String(value === "PASS_THROUGH" ? "normal" : value || "normal").toLowerCase().replace(/_/g, "-");
+const textTransforms = { ORIGINAL: "none", UPPER: "uppercase", LOWER: "lowercase", TITLE: "titlecase" };
+const textCases = Object.fromEntries(Object.entries(textTransforms).map(([key, value]) => [value, key]));
+function readTextStyle(font = {}, attrs = {}) {
+  return { fontFamily: font.family || "Arial", fontWeight: fontWeight(font.style), italic: /italic|oblique/i.test(font.style || ""), fontSize: finite(font.size, 14), letterSpacing: finite(attrs.letterSpacing) * finite(font.size, 14) / 1000, textDecoration: attrs.decoration?.includes("underline") ? "UNDERLINE" : attrs.decoration?.includes("line-through") ? "STRIKETHROUGH" : "NONE", textCase: textCases[attrs.textTransform] || "ORIGINAL" };
+}
+function writeTextStyle(node) {
+  const style = fontStyle(node.fontWeight, node.italic).replace(/^Regular Italic$/, "Italic");
+  const postscript = node.fontFamily === "Arial" ? `Arial${node.fontWeight >= 700 ? node.italic ? "-BoldItalic" : "-Bold" : node.italic ? "-Italic" : ""}MT` : `${node.fontFamily.replace(/\s+/g, "")}-${style.replace(/\s+/g, "")}`;
+  return { font: { family: node.fontFamily, style, postscriptName: node.fontPostscript || postscript, size: node.fontSize }, textAttributes: { letterSpacing: node.fontSize ? node.letterSpacing / node.fontSize * 1000 : 0, decoration: node.textDecoration === "UNDERLINE" ? ["underline"] : node.textDecoration === "STRIKETHROUGH" ? ["line-through"] : [], textTransform: textTransforms[node.textCase] || "none" } };
+}
+
+function textRanges(node) {
+  const end = node.text.length, boundaries = new Set([0, end]);
+  for (const run of node.styleRuns) { boundaries.add(Math.max(0, Math.min(end, run.start))); boundaries.add(Math.max(0, Math.min(end, run.start + run.length))); }
+  const sorted = [...boundaries].sort((a, b) => a - b), ranges = [];
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const from = sorted[i], to = sorted[i + 1], style = { ...node };
+    for (const run of node.styleRuns) if (run.start <= from && run.start + run.length >= to) {
+      if (["fontFamily", "fontWeight", "italic"].some((key) => run.style[key] !== undefined && run.style[key] !== style[key])) delete style.fontPostscript;
+      Object.assign(style, run.style);
+    }
+    ranges.push({ from, to, node: style });
+  }
+  return ranges;
+}
 
 export async function readXD(bytes, report) {
   const archive = unpack(bytes);
@@ -92,7 +118,21 @@ export async function readXD(bytes, report) {
       const radii = Array.isArray(shape.r) ? shape.r.map((value) => finite(value)) : Array(4).fill(finite(shape.r));
       Object.assign(props, { cornerRadius: radii[0], independentCorners: radii.some((radius) => radius !== radii[0]), topLeftRadius: radii[0], topRightRadius: radii[1] ?? radii[0], bottomRightRadius: radii[2] ?? radii[0], bottomLeftRadius: radii[3] ?? radii[0] });
     }
-    if (type === "TEXT") Object.assign(props, { text: text.rawText || "", fontFamily: font.family || "Arial", fontWeight: fontWeight(font.style), italic: /italic|oblique/i.test(font.style || ""), fontSize: finite(font.size, 14), textAutoResize: "NONE", textAlignHorizontal: String(s.textAttributes?.textAlign || text.textAlign || "left").toUpperCase(), lineHeight: s.textAttributes?.lineHeight || null, letterSpacing: finite(s.textAttributes?.letterSpacing) });
+    if (type === "TEXT") {
+      Object.assign(props, readTextStyle(font, s.textAttributes), { text: text.rawText || "", textAutoResize: "NONE", textAlignHorizontal: String(s.textAttributes?.textAlign || text.textAlign || "left").toUpperCase(), lineHeight: s.textAttributes?.lineHeight || null });
+      const ranges = raw.meta?.ux?.rangedStyles;
+      if (ranges?.length) {
+        let start = 0;
+        props.styleRuns = ranges.map((range) => {
+          const length = Math.min(finite(range.length), Math.max(0, props.text.length - start));
+          const run = { start, length, style: { ...readTextStyle({ family: range.fontFamily, style: range.fontStyle, size: range.fontSize }, { letterSpacing: range.charSpacing, decoration: range.underline ? ["underline"] : range.strikethrough ? ["line-through"] : [], textTransform: range.textTransform }), fills: [solid(readColor(range.fill))] } };
+          start += length;
+          return run;
+        }).filter((run) => run.length > 0);
+      } else {
+        props.styleRuns = (text.paragraphs || []).flatMap((paragraph) => paragraph.lines || []).flat().filter((run) => run.style && run.to > run.from).map((run) => ({ start: run.from, length: run.to - run.from, style: { ...readTextStyle({ ...font, ...run.style.font }, { ...s.textAttributes, ...run.style.textAttributes }), fills: paint(run.style.fill || s.fill, raw.name, w, h) } }));
+      }
+    }
     props.effects = (s.filters || s.effects || []).flatMap((effect) => {
       const list = effect.params?.dropShadows || effect.params?.innerShadows;
       return (list || [effect.params || {}]).map((params) => ({ type: effect.type === "dropShadow" ? "DROP_SHADOW" : effect.type === "uxdesign#innerShadow" ? "INNER_SHADOW" : params.backgroundEffect ? "BACKGROUND_BLUR" : "LAYER_BLUR", color: readColor(params.color), radius: list ? finite(params.r) * 2 : finite(params.blurAmount ?? params.r ?? params.blur), spread: finite(params.spread), offset: { x: finite(params.dx ?? params.x), y: finite(params.dy ?? params.y) }, visible: effect.visible !== false }));
@@ -100,6 +140,12 @@ export async function readXD(bytes, report) {
     const node = addNode(graph, type, parent, props);
     if (!['artboard', 'group', 'shape', 'text'].includes(raw.type)) report.add("xd-node", "部分 XD 专属图层按基础图形转换。", raw.name);
     if (raw.meta?.ux?.interactions?.length) report.add("prototype", "原型交互暂不参与格式转换。", raw.name);
+    const clips = raw.meta?.ux?.clipPathResources?.children || [];
+    if (clips.length) {
+      const clip = clips.length === 1 ? clips[0] : { type: "group", name: "裁切形状", group: { children: clips } };
+      const mask = readNode(clip, node.id, { x: 0, y: 0 }, depth + 1, chain);
+      if (mask) { mask.isMask = true; mask.maskType = raw.meta.ux.orbitMaskType || "VECTOR"; }
+    }
     const children = childrenOf(raw);
     children.forEach((child) => readNode(child, node.id, raw.type === "artboard" ? { x: art.x || 0, y: art.y || 0 } : shape.type === "compound" ? { x: ox, y: oy } : { x: 0, y: 0 }, depth + 1, chain));
     if (type === "GROUP" && children.length) {
@@ -109,6 +155,7 @@ export async function readXD(bytes, report) {
       if (Math.abs(sx - 1) > 0.001 || Math.abs(sy - 1) > 0.001) graph.getChildren(node.id).forEach((child) => scaleTree(graph, child, sx, sy, report));
       Object.assign(node, transformProps(t, node.width, node.height, report, raw.name));
     }
+    return node;
   }
   roots.filter((r) => r.path.startsWith("artwork/")).forEach((r) => (r.data.children || []).forEach((node) => readNode(node, page.id)));
   if (!graph.getChildren(page.id).length) throw new Error("XD 文件没有可读取的画板或图层。");
@@ -166,13 +213,30 @@ export function writeXD(graph, name, thumbnail, report) {
   function localPaintNode(node, name, fills, strokes) {
     return { ...node, name, x: 0, y: 0, rotation: 0, flipX: false, flipY: false, opacity: 1, visible: true, locked: false, fills, strokes, effects: [], blendMode: "NORMAL" };
   }
+  function clipGroup(name, mask, children, transform = { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 }, maskType = "VECTOR") {
+    return { type: "group", name, id: uid(), transform, meta: { ux: { hasCustomName: true, orbitMaskType: maskType, clipPathResources: { type: "clipPath", children: [mask] } } }, group: { children } };
+  }
+  function children(nodes, extraX = 0, extraY = 0) {
+    const output = [];
+    let destination = output, x = extraX, y = extraY;
+    for (const node of nodes) {
+      if (node.isMask && xdMaskSupported(graph, node)) {
+        const group = clipGroup(`${node.name} / 蒙版`, layer(node), [], { a: 1, b: 0, c: 0, d: 1, tx: x, ty: y }, node.maskType);
+        destination.push(group);
+        destination = group.group.children;
+        x = y = 0;
+      } else destination.push(layer(node, x, y));
+    }
+    return output;
+  }
+  const needsImageTransform = (fill) => fill.type === "IMAGE" && (hasImageTransform(fill) || ["CROP", "STRETCH"].includes(fill.imageScaleMode));
   function layer(node, extraX = 0, extraY = 0) {
     written.add(node.id);
     const id = uid(), transform = xdMatrix(node);
     transform.tx += extraX; transform.ty += extraY;
     const value = { type: "shape", name: node.name, id, transform, visible: node.visible, meta: { ux: { hasCustomName: true, locked: !!node.locked } }, style: style(node) };
     const isLeaf = ["TEXT", "ELLIPSE", "RECTANGLE", "ROUNDED_RECTANGLE", "LINE", "VECTOR", "STAR", "POLYGON", "BOOLEAN_OPERATION"].includes(node.type);
-    if (isLeaf && (node.fills.length > 1 || node.strokes.length > 1 || [...node.fills, ...node.strokes].some((paint) => !paint.visible || paint.opacity !== 1 || paint.blendMode && !["NORMAL", "PASS_THROUGH"].includes(paint.blendMode)))) {
+    if (isLeaf && (node.fills.length > 1 || node.strokes.length > 1 || node.strokes.length && node.fills.some(needsImageTransform) || [...node.fills, ...node.strokes].some((paint) => !paint.visible || paint.opacity !== 1 || paint.blendMode && !["NORMAL", "PASS_THROUGH"].includes(paint.blendMode)))) {
       // XD has one native fill/stroke; keep every paint in an editable layer stack.
       const paints = [
         ...node.fills.map((fill, index) => ({ node: { ...localPaintNode(node, `${node.name} / 填充 ${index + 1}`, [{ ...fill, opacity: 1, blendMode: "NORMAL" }], []), opacity: fill.opacity, blendMode: fill.blendMode || "NORMAL" }, visible: fill.visible })),
@@ -189,13 +253,34 @@ export function writeXD(graph, name, thumbnail, report) {
       report.add("xd-paint-layers", "多重填充、描边或隐藏的绘制属性已拆为可编辑子图层保留。", node.name, "info");
       return value;
     }
-    if (node.type === "TEXT") {
+    const imageFill = node.fills[0];
+    const size = imageFill && imageSizes.get(imageFill.imageHash);
+    const imageMatrix = imageFill && needsImageTransform(imageFill) && xdImageTransform(node, imageFill, size);
+    if (imageMatrix) {
+      const mask = layer(localPaintNode(node, `${node.name} / 裁切形状`, [solid(color())], []));
+      const image = { type: "shape", name: `${node.name} / 原图`, id: uid(), transform: imageMatrix, shape: { type: "rect", x: 0, y: 0, width: size.width, height: size.height }, style: { fill: paint({ ...imageFill, imageScaleMode: "FILL" }, node) } };
+      const crop = clipGroup(`${node.name} / 图片裁剪`, mask, [image]);
+      value.type = "group"; value.group = { children: [crop] };
+      value.meta.ux.width = node.width; value.meta.ux.height = node.height;
+      value.style.fill = value.style.stroke = { type: "none" };
+      report.add("xd-image-crop", "图片原始资源与裁剪变换已保留为可编辑的图片和裁切形状。", node.name, "info");
+    } else if (node.type === "TEXT") {
       value.type = "text";
-      const style = fontStyle(node.fontWeight, node.italic);
-      value.style.font = { family: node.fontFamily, style, postscriptName: node.fontPostscript || `${node.fontFamily.replace(/\s+/g, "")}-${style.replace(/\s+/g, "")}`, size: node.fontSize };
-      value.style.textAttributes = { textAlign: node.textAlignHorizontal.toLowerCase(), paragraphAfterSpacing: node.paragraphSpacing, letterSpacing: node.letterSpacing, lineHeight: node.lineHeight || node.fontSize * 1.2 };
+      Object.assign(value.style, writeTextStyle(node));
+      Object.assign(value.style.textAttributes, { textAlign: node.textAlignHorizontal.toLowerCase(), paragraphAfterSpacing: node.paragraphSpacing, lineHeight: node.lineHeight || node.fontSize * 1.2 });
+      const ranges = textRanges(node);
+      value.meta.ux.singleTextObject = true;
+      value.meta.ux.rangedStyles = ranges.map(({ from, to, node: run }) => {
+        const native = writeTextStyle(run), fill = run.fills.at(-1);
+        return { length: to - from, fontFamily: run.fontFamily, fontStyle: native.font.style, fontSize: run.fontSize, charSpacing: native.textAttributes.letterSpacing, underline: run.textDecoration === "UNDERLINE", strikethrough: run.textDecoration === "STRIKETHROUGH", textTransform: native.textAttributes.textTransform, textScript: "none", fill: writeRangeColor(fill?.color ? { ...fill.color, a: fill.color.a * fill.opacity } : { r: 0, g: 0, b: 0, a: 1 }) };
+      });
       let from = 0;
-      value.text = { frame: { type: "positioned", width: node.width, height: node.height }, rawText: node.text, paragraphs: node.text.split("\n").map((line, index) => { const start = from; from += line.length + 1; return { lines: [[{ from: start, to: start + line.length, x: 0, y: node.fontSize * 0.8 + index * (node.lineHeight || node.fontSize * 1.2) }]] }; }) };
+      value.text = { frame: { type: "positioned", width: node.width, height: node.height }, rawText: node.text, paragraphs: node.text.split("\n").map((line, index) => {
+        const start = from, end = start + line.length;
+        from = end + 1;
+        const runs = ranges.filter((range) => range.from < end && range.to > start).map((range, i) => ({ from: Math.max(start, range.from), to: Math.min(end, range.to), ...(i === 0 ? { x: 0 } : {}), y: node.fontSize * 0.8 + index * (node.lineHeight || node.fontSize * 1.2), style: { ...writeTextStyle(range.node), fill: paint(range.node.fills.at(-1), range.node) } }));
+        return { lines: [runs.length ? runs : [{ from: start, to: end, x: 0, y: node.fontSize * 0.8 + index * (node.lineHeight || node.fontSize * 1.2) }]] };
+      }) };
     } else if (node.type === "BOOLEAN_OPERATION") {
       value.shape = { type: "compound", path: nodePath(node), operation: String(node.booleanOperation || "UNION").toLowerCase(), children: graph.getChildren(node.id).map((child) => layer(child)) };
     } else if (["ELLIPSE"].includes(node.type)) value.shape = { type: "ellipse", cx: node.width / 2, cy: node.height / 2, rx: node.width / 2, ry: node.height / 2 };
@@ -207,9 +292,15 @@ export function writeXD(graph, name, thumbnail, report) {
       if (!path) report.add("vector-empty", "部分矢量没有可读取的轮廓。", node.name);
     } else {
       value.type = "group";
-      value.group = { children: graph.getChildren(node.id).map((child) => layer(child)) };
+      let content = children(graph.getChildren(node.id));
+      if (node.clipsContent) {
+        const mask = layer({ ...localPaintNode(node, `${node.name} / 画框裁切`, [solid(color())], []), type: "RECTANGLE" });
+        content = [clipGroup(`${node.name} / 裁切内容`, mask, content)];
+      }
+      value.group = { children: content };
       value.meta.ux.width = node.width; value.meta.ux.height = node.height;
-      if (node.fills.length || node.strokes.length) value.group.children.unshift(layer({ ...localPaintNode(node, `${node.name} 背景`, node.fills, node.strokes), type: "RECTANGLE" }));
+      if (node.fills.length) value.group.children.unshift(layer({ ...localPaintNode(node, `${node.name} 背景`, node.fills, []), type: "RECTANGLE" }));
+      if (node.strokes.length) value.group.children.push(layer({ ...localPaintNode(node, `${node.name} 描边`, [], node.strokes), type: "RECTANGLE" }));
       value.style.fill = value.style.stroke = { type: "none" };
     }
     return value;
@@ -221,15 +312,15 @@ export function writeXD(graph, name, thumbnail, report) {
     const roots = graph.getChildren(page.id);
     const frames = roots.filter((n) => n.type === "FRAME" || n.type === "COMPONENT");
     const free = roots.filter((n) => !frames.includes(n));
-    const sourceBoards = [...frames.map((node) => ({ node, children: graph.getChildren(node.id) })), ...(free.length ? [{ node: { ...page, name: `${page.name} / 画布`, x: 0, y: 0, width: Math.max(1, ...free.map((n) => n.x + n.width)), height: Math.max(1, ...free.map((n) => n.y + n.height)) }, children: free }] : [])];
+    const sourceBoards = [...frames.map((node) => ({ node, items: graph.getChildren(node.id) })), ...(free.length ? [{ node: { ...page, name: `${page.name} / 画布`, x: 0, y: 0, width: Math.max(1, ...free.map((n) => n.x + n.width)), height: Math.max(1, ...free.map((n) => n.y + n.height)) }, items: free }] : [])];
     let pageRight = 0;
-    for (const { node, children } of sourceBoards) {
+    for (const { node, items } of sourceBoards) {
       written.add(node.id);
       const id = uid(), x = node.x + pageOffset, y = node.y;
       boards[id] = { width: node.width || 1, height: node.height || 1, name: node.name, x, y };
       pageRight = Math.max(pageRight, node.x + node.width);
       const boardStyle = style(node);
-      const boardChildren = children.map((child) => layer(child, x, y));
+      const boardChildren = children(items, x, y);
       if (node.fills.length > 1 || node.strokes.length || node.independentCorners || node.cornerRadius) {
         boardChildren.unshift(layer({ ...localPaintNode(node, `${node.name} 背景`, node.fills, node.strokes), type: "RECTANGLE", x, y }));
         boardStyle.fill = boardStyle.stroke = { type: "none" };

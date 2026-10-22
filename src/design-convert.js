@@ -1,5 +1,5 @@
 const designWorkerURL = new URL("./design-worker.js", document.currentScript.src);
-designWorkerURL.search = "v=design-fidelity-1";
+designWorkerURL.search = "v=design-editable-2";
 const formatNames = { fig: "Figma (.fig)", sketch: "Sketch (.sketch)", xd: "Adobe XD (.xd)" };
 
 export function renderDesignWorkspace() {
@@ -19,7 +19,7 @@ export function renderDesignWorkspace() {
           <label class="form-label" for="designTarget">目标格式<select id="designTarget"><option value="fig">Figma (.fig)</option><option value="sketch">Sketch (.sketch)</option><option value="xd">Adobe XD (.xd)</option></select></label>
           <p class="tool-output-hint">保留可编辑的画板、分组、基础形状、矢量路径、文字和图片。转换后会列出需要检查的兼容性问题。</p>
           <label class="check-label"><input id="designStrict" type="checkbox" checked />阻止已知属性丢失（推荐）</label>
-          <p class="tool-hint">发现已知无法保留的效果时停止转换，并列出具体图层。检查通过不代表跨软件外观完全一致，仍需在目标软件中核对。</p>
+          <p class="tool-hint">发现已知无法保留的效果时停止转换，并列出具体图层。不合成为图片。检查通过不代表跨软件外观完全一致，仍需在目标软件中核对。</p>
           <div class="tool-actions"><button id="designConvert" class="btn primary" type="button" disabled>开始转换</button><button id="designCancel" class="btn secondary" type="button" hidden>取消处理</button></div>
           <p id="designStatus" class="tool-status" role="status" aria-live="polite">请先选择设计文件。</p>
           <div id="designResult" class="tool-result" hidden><strong>设计文件已生成</strong><p id="designResultInfo"></p><a id="designDownload" class="btn primary">下载设计文件</a><p class="tool-hint">请在目标软件中打开结果，检查字体、位置与复杂效果。</p></div>

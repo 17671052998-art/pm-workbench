@@ -54,6 +54,8 @@ async function main() {
 
   const { readDesign, convertDesign } = await import("../src/design/convert.mjs");
   await require("./design-fidelity.cjs")();
+  await require("./design-clipping.cjs")();
+  await require("./design-text.cjs")();
   const { nodePath, unpack, createReport, transformProps, xdMatrix } = await import("../src/design/common.mjs");
   const source = fixture();
   const parsed = await readDesign(source, "fixture.sketch");
@@ -182,6 +184,7 @@ async function main() {
     const maskEntries = unzipSync(source);
     const maskPage = JSON.parse(strFromU8(maskEntries["pages/page.json"]));
     maskPage.layers[0].layers[0].layers[0].hasClippingMask = true;
+    maskPage.layers[0].layers[0].layers[0].style.fills[0].contextSettings = { opacity: 0.5 };
     maskEntries["pages/page.json"] = strToU8(JSON.stringify(maskPage));
     const maskSource = zipSync(maskEntries);
     await page.locator("#designFile").setInputFiles({ name: "mask.sketch", mimeType: "application/octet-stream", buffer: Buffer.from(maskSource) });

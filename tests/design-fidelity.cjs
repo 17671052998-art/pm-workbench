@@ -126,7 +126,7 @@ module.exports = async function testFidelity() {
   // Unsupported attributes must never quietly generate a supposedly lossless file.
   gradient.isMask = true;
   const image = card.fills[1];
-  image.imageTransform = { m00: 0.5, m01: 0, m02: 0.1, m10: 0, m11: 1, m12: 0 };
+  image.imageTransform = { m00: 0, m01: 0, m02: 0.1, m10: 0, m11: 1, m12: 0 };
   await assert.rejects(convertDesign(parsed, "xd"), (error) => {
     assert.equal(error.code, "PRESERVATION_REQUIRED");
     assert.ok(error.issues.some((issue) => issue.code === "mask"));

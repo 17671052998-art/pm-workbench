@@ -23,7 +23,7 @@ export async function convertDesign(parsed, target, { strict = true } = {}) {
   function requirePreservation() {
     const issues = report.list();
     if (strict && issues.some((issue) => issue.severity !== "info")) {
-      const error = new Error("发现无法等价保留的属性，已停止转换。请查看下方具体图层和原因；如接受简化，可关闭保留检查后重试。");
+      const error = new Error("发现无法等价保留的属性，已停止转换。请查看下方具体图层和原因；未生成缺失属性的文件，也不会合成为图片。");
       error.code = "PRESERVATION_REQUIRED";
       error.issues = issues;
       throw error;

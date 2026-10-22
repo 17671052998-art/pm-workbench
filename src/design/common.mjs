@@ -68,6 +68,17 @@ export function hasMixedTextStyles(node) {
   return node.styleRuns.some((run) => Object.entries(run.style).some(([key, input]) => input !== undefined && value(key, input) !== value(key, node[key])));
 }
 
+export function xdTextRunsSupported(node) {
+  const fields = new Set(["fontFamily", "fontSize", "fontWeight", "italic", "letterSpacing", "textDecoration", "textCase", "fills"]);
+  return node.styleRuns.every((run) => Object.entries(run.style).every(([key, value]) => {
+    if (value === undefined || JSON.stringify(value) === JSON.stringify(node[key])) return true;
+    if (!fields.has(key)) return false;
+    if (key === "fills") return node.fills.length === 1 && node.fills[0].opacity === 1 && value.length === 1 && value[0].type === "SOLID" && value[0].visible !== false && (!value[0].blendMode || value[0].blendMode === "NORMAL");
+    if (key === "textCase") return ["ORIGINAL", "UPPER", "LOWER", "TITLE"].includes(value);
+    return key !== "textDecoration" || ["NONE", "UNDERLINE", "STRIKETHROUGH"].includes(value);
+  }));
+}
+
 export function addNode(graph, type, parent, props = {}) {
   if (graph.nodes.size > MAX_NODES) throw new Error("图层超过 50,000 个，请按页面拆分后转换。");
   return graph.createNode(type, parent, props);
@@ -128,6 +139,30 @@ export function imageDimensions(bytes) {
 export function hasImageTransform(fill) {
   const matrix = fill.imageTransform;
   return matrix && Object.entries({ m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 }).some(([key, identity]) => Math.abs(finite(matrix[key], identity) - identity) > 0.000001);
+}
+
+export function xdImageTransform(node, fill, size) {
+  if (!size || !["RECTANGLE", "ROUNDED_RECTANGLE", "ELLIPSE", "VECTOR", "BOOLEAN_OPERATION", "STAR", "POLYGON"].includes(node.type)) return null;
+  const m = { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0, ...fill.imageTransform };
+  const det = m.m00 * m.m11 - m.m01 * m.m10;
+  if (!Object.values(m).every(Number.isFinite) || Math.abs(det) < 1e-12) return null;
+  // Figma maps a layer's unit square into the image's unit square; XD needs the inverse in pixels.
+  return { a: node.width * m.m11 / det / size.width, b: -node.height * m.m10 / det / size.width, c: -node.width * m.m01 / det / size.height, d: node.height * m.m00 / det / size.height, tx: node.width * (m.m01 * m.m12 - m.m11 * m.m02) / det, ty: node.height * (m.m10 * m.m02 - m.m00 * m.m12) / det };
+}
+
+export function xdMaskSupported(graph, node, mode = node.maskType) {
+  if (!node.visible || node.opacity !== 1 || node.effects.some((effect) => effect.visible)) return false;
+  if (node.fills.length > 1 || node.strokes.length > 1 || [...node.fills, ...node.strokes].some((paint) => !paint.visible || paint.opacity !== 1 || paint.blendMode && !["NORMAL", "PASS_THROUGH"].includes(paint.blendMode))) return false;
+  if (["GROUP", "FRAME"].includes(node.type)) return false;
+  if (!["RECTANGLE", "ROUNDED_RECTANGLE", "ELLIPSE", "VECTOR", "BOOLEAN_OPERATION", "STAR", "POLYGON"].includes(node.type)) return false;
+  if (["VECTOR", "BOOLEAN_OPERATION"].includes(node.type) && !nodePath(node)) return false;
+  if (mode === "VECTOR") return true;
+  if (node.strokes.some((stroke) => stroke.visible)) return false;
+  const paints = node.fills.filter((fill) => fill.visible);
+  return paints.length > 0 && paints.every((fill) => {
+    const colors = fill.type === "SOLID" ? [fill.color] : fill.type.startsWith("GRADIENT") ? (fill.gradientStops || []).map((stop) => stop.color) : [];
+    return fill.opacity === 1 && colors.length > 0 && colors.every((c) => c.a === 1 && (mode !== "LUMINANCE" || c.r === 1 && c.g === 1 && c.b === 1));
+  });
 }
 
 export function normalizePath(d) {
@@ -250,10 +285,10 @@ export function targetReport(graph, target, report) {
     for (const fill of [...node.fills, ...node.strokes]) {
       if (target !== "fig" && !["SOLID", "IMAGE", "GRADIENT_LINEAR", "GRADIENT_RADIAL"].includes(fill.type)) report.add("paint-approximation", "目标格式尚未实现此填充类型的等价转换。", node.name);
       if (target === "xd" && fill.type === "GRADIENT_RADIAL") report.add("xd-radial-gradient", "径向渐变尚不能等价导出到 XD。", node.name);
-      if (target !== "fig" && fill.type === "IMAGE" && (hasImageTransform(fill) || fill.imageScaleMode === "CROP")) report.add("image-crop", "图片裁剪或局部变换尚不能等价转换。", node.name);
+      if (target !== "fig" && fill.type === "IMAGE" && (hasImageTransform(fill) || ["CROP", "STRETCH"].includes(fill.imageScaleMode)) && (target !== "xd" || !xdImageTransform(node, fill, imageDimensions(graph.images.get(fill.imageHash))))) report.add("image-crop", "此图片裁剪或局部变换尚不能等价转换。", node.name);
     }
-    if (target !== "fig" && node.isMask) report.add("mask", "蒙版行为尚不能保证等价转换。", node.name);
-    if (node.clipsContent && graph.getNode(node.parentId)?.type !== "CANVAS" && target !== "fig") report.add("nested-clip", "嵌套画框的裁切范围可能发生变化，请检查溢出内容。", node.name);
+    if (target !== "fig" && node.isMask && (target !== "xd" || !xdMaskSupported(graph, node))) report.add("mask", "此蒙版包含透明渐变、明暗变化或其他尚不能等价转换的属性。", node.name);
+    if (node.clipsContent && graph.getNode(node.parentId)?.type !== "CANVAS" && target !== "fig" && target !== "xd") report.add("nested-clip", "嵌套画框的裁切范围可能发生变化，请检查溢出内容。", node.name);
     if (target === "xd" && node.type === "BOOLEAN_OPERATION" && !nodePath(node)) report.add("boolean", "此布尔运算缺少可导出的合成轮廓，不能保证外观。", node.name);
     if (["CONNECTOR", "SHAPE_WITH_TEXT"].includes(node.type)) report.add("special-node", "部分特殊图层仅保留可读取的子图层和基础外观。", node.name);
     if (target !== "fig" && node.arcData && (node.arcData.innerRadius || Math.abs(node.arcData.endingAngle - node.arcData.startingAngle - Math.PI * 2) > 0.001)) report.add("arc-shape", "圆弧或环形的参数尚不能等价转换。", node.name);
@@ -262,7 +297,7 @@ export function targetReport(graph, target, report) {
     if (target === "xd" && node.effects.some((effect) => effect.blendMode && effect.blendMode !== "NORMAL")) report.add("xd-effect-blend", "此效果的混合模式尚不能等价导出到 XD。", node.name);
     if (target === "xd" && node.effects.some((effect) => effect.spread)) report.add("xd-shadow-spread", "XD 阴影扩展参数尚不能保证等价保留。", node.name);
     if (target === "xd" && node.type === "TEXT" && node.fills.some((fill) => fill.type !== "SOLID")) report.add("xd-text-paint", "XD 可编辑文字不支持等价保留此图片或渐变填充。", node.name);
-    if (target === "xd" && node.type === "TEXT" && hasMixedTextStyles(node)) report.add("xd-text-runs", "XD 导出暂使用每个文字图层的基础样式，混排样式需要检查。", node.name);
+    if (target === "xd" && node.type === "TEXT" && !xdTextRunsSupported(node)) report.add("xd-text-runs", "此文字包含尚不能等价保留的局部样式，例如局部行高、字体特性或复杂填充。", node.name);
   }
 }
 
