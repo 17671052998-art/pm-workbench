@@ -1,9 +1,10 @@
-export const MAX_WATERMARK_PIXELS = 12_000_000;
 const TILE = 24;
+const BLOCK = 1536;
+const HALO = 288;
 
 function validate(image) {
   const { width, height, data } = image;
-  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 || width * height > MAX_WATERMARK_PIXELS || data?.length !== width * height * 4) throw new Error("图片尺寸无效或超过 1200 万像素，请裁小后重试。");
+  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1 || !Number.isSafeInteger(width * height * 4) || data?.length !== width * height * 4) throw new Error("图片尺寸或像素数据无效，请重新读取原图。");
 }
 
 function dominant(samples) {
@@ -53,6 +54,34 @@ function components(mask, width, height, queue, visit) {
 
 export function detectWatermarks(image, options = {}) {
   validate(image);
+  if (image.width <= BLOCK && image.height <= BLOCK) return detectBlock(image, options);
+  const { width, height, data } = image, regions = [];
+  let labels = new Uint16Array(width * height);
+  // Overlap includes whole glyph groups and protection fringes; copy only each block's core.
+  for (let top = 0; top < height; top += BLOCK) for (let left = 0; left < width; left += BLOCK) {
+    const x = Math.max(0, left - HALO), y = Math.max(0, top - HALO);
+    const right = Math.min(width, left + BLOCK), bottom = Math.min(height, top + BLOCK);
+    const blockWidth = Math.min(width, right + HALO) - x, blockHeight = Math.min(height, bottom + HALO) - y;
+    const pixels = new Uint8ClampedArray(blockWidth * blockHeight * 4);
+    for (let row = 0; row < blockHeight; row++) pixels.set(data.subarray(((y + row) * width + x) * 4, ((y + row) * width + x + blockWidth) * 4), row * blockWidth * 4);
+    const detected = detectBlock({ width: blockWidth, height: blockHeight, data: pixels }, options), ids = new Map();
+    for (let py = top; py < bottom; py++) for (let px = left; px < right; px++) {
+      const localId = detected.labels[(py - y) * blockWidth + px - x];
+      if (!localId) continue;
+      let id = ids.get(localId);
+      if (!id) {
+        const region = detected.regions[localId - 1], rx = Math.max(left, x + region.x - 1), ry = Math.max(top, y + region.y - 1);
+        id = regions.length + 1; ids.set(localId, id);
+        if (id > 65535 && labels instanceof Uint16Array) labels = new Uint32Array(labels);
+        regions.push({ ...region, id, x: rx, y: ry, width: Math.min(right, x + region.x + region.width + 1) - rx, height: Math.min(bottom, y + region.y + region.height + 1) - ry, pixels: 0 });
+      }
+      labels[py * width + px] = id; regions[id - 1].pixels++;
+    }
+  }
+  return { labels, regions, tiled: true };
+}
+
+function detectBlock(image, options) {
   const { width, height, data } = image, length = width * height;
   const threshold = Math.max(15, Math.min(100, Number(options.strength) || 55));
   const model = backgrounds(image), candidates = new Uint8Array(length), ink = new Uint8Array(length), protect = new Uint8Array(length), queue = new Uint32Array(length);

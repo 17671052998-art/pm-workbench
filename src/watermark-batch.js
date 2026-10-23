@@ -1,5 +1,4 @@
 import { Zip, ZipPassThrough } from "fflate";
-import { MAX_WATERMARK_PIXELS } from "./watermark-core.mjs";
 
 export const MAX_WATERMARK_FILES = 120;
 const MAX_OUTPUT_BYTES = 512 * 1024 * 1024;
@@ -13,7 +12,7 @@ export function renderWatermarkBatch() {
     <p id="wmBatchStatus" class="tool-status" role="status" aria-live="polite"></p>
     <div class="wm-batch-scroll"><table class="wm-batch-table"><thead><tr><th scope="col">图片</th><th scope="col">处理状态</th><th scope="col">结果</th></tr></thead><tbody id="wmBatchList"></tbody></table></div>
     <div class="tool-actions wm-batch-actions"><button id="wmBatchZip" class="btn primary" type="button" disabled>打包下载 PNG（ZIP）</button><a id="wmBatchArchive" class="btn secondary" hidden>再次下载 ZIP</a></div>
-    <p class="tool-hint">逐张在本机处理，不上传图片。每张上限 40 MB、1200 万像素、最长边 8192 px；结果缓存上限 512 MB。暂停会保留已完成结果，可继续处理；更换图片或离开工具箱后清空缓存。</p>
+    <p class="tool-hint">逐张在本机处理，不上传图片。不限制单文件大小、像素和边长，大图分块识别并按原尺寸导出；实际容量取决于设备内存和浏览器。结果缓存上限 512 MB。暂停保留已完成结果；更换图片或离开工具箱后清空缓存。</p>
   </section>`;
 }
 
@@ -86,30 +85,31 @@ export function mountWatermarkBatch(root, on, { workerURL, getOptions, onStateCh
     $("wmBatchList").append(fragment); $("wmBatch").hidden = false; paint();
   }
   async function processFile(file, options, current, signal) {
-    if (!file.size || file.size > 40 * 1024 * 1024) throw new Error("请选择非空、40 MB 以内的图片");
+    if (!file.size) throw new Error("图片文件为空，请重新选择");
     if (!/\.(png|jpe?g|webp)$/i.test(file.name) || file.type && !["image/png", "image/jpeg", "image/webp"].includes(file.type)) throw new Error("仅支持静态 PNG、JPG、WebP");
     let bitmap, worker;
     const canvas = document.createElement("canvas");
     try {
       bitmap = await createImageBitmap(file); active(current);
-      if (bitmap.width * bitmap.height > MAX_WATERMARK_PIXELS || bitmap.width > 8192 || bitmap.height > 8192) throw new Error("超过 1200 万像素或最长边 8192 px");
       canvas.width = bitmap.width; canvas.height = bitmap.height;
-      const ctx = canvas.getContext("2d"); ctx.drawImage(bitmap, 0, 0); bitmap.close(); bitmap = null;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("浏览器无法分配这张大图的画布，请释放内存或更换桌面浏览器后重试");
+      ctx.drawImage(bitmap, 0, 0); bitmap.close(); bitmap = null;
       const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const result = await new Promise((resolve, reject) => {
         worker = new Worker(workerURL);
         const finish = (error, data) => { clearTimeout(timer); signal.removeEventListener("abort", abort); worker.terminate(); error ? reject(error) : resolve(data); };
         const abort = () => finish(abortError());
-        const timer = setTimeout(() => finish(new Error("处理超时，请缩小图片后重试")), 60000);
+        const timer = setTimeout(() => finish(new Error("处理超时，请关闭其他占用内存的页面后重试")), 180000);
         signal.addEventListener("abort", abort, { once: true });
-        worker.onerror = () => finish(new Error("处理程序加载失败，请重试"));
+        worker.onerror = () => finish(new Error("处理程序加载失败或浏览器内存不足，请关闭其他页面后重试"));
         worker.onmessage = ({ data }) => { if (data.type === "error") finish(new Error(data.message)); else if (data.type === "batch-done") finish(null, data); };
         worker.postMessage({ type: "batch", buffer: image.data.buffer, width: image.width, height: image.height, options }, [image.data.buffer]);
       });
       active(current);
-      ctx.putImageData(new ImageData(new Uint8ClampedArray(result.data), result.width, result.height), 0, 0);
+      ctx.putImageData(new ImageData(result.data, result.width, result.height), 0, 0);
       const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png")); active(current);
-      if (!blob) throw new Error("PNG 导出失败，请重试");
+      if (!blob) throw new Error("浏览器无法导出此尺寸的 PNG，请释放内存或更换桌面浏览器后重试");
       return { blob, regions: result.regions };
     } finally { bitmap?.close(); worker?.terminate(); canvas.width = canvas.height = 1; }
   }

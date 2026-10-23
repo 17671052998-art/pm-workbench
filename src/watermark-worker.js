@@ -18,5 +18,5 @@ self.onmessage = ({ data }) => {
       const result = repairWatermarks(image, analysis, data.selected, data.rectangles);
       self.postMessage({ type: "done", ...result }, [result.data.buffer]);
     }
-  } catch (error) { self.postMessage({ type: "error", message: error.message || "处理失败，请更换图片后重试。" }); }
+  } catch (error) { self.postMessage({ type: "error", message: error instanceof RangeError ? "浏览器可用内存不足，无法为这张大图分配处理空间。请关闭其他页面或更换设备后重试。" : error.message || "处理失败，请更换图片后重试。" }); }
 };

@@ -1,8 +1,7 @@
-import { MAX_WATERMARK_PIXELS } from "./watermark-core.mjs";
 import { MAX_WATERMARK_FILES, renderWatermarkBatch, mountWatermarkBatch } from "./watermark-batch.js";
 
 const workerURL = new URL("./watermark-worker.js", document.currentScript.src);
-workerURL.search = "v=watermark-batch-2";
+workerURL.search = "v=watermark-large-3";
 
 export function renderWatermarkWorkspace() {
   return `<section id="wmWorkspace" class="panel tool-workspace" aria-labelledby="wmTitle" hidden>
@@ -11,7 +10,7 @@ export function renderWatermarkWorkspace() {
       <div class="tool-source">
         <h3>1. 上传与预览</h3>
         <input id="wmFile" class="tool-file-input" type="file" multiple accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp" aria-label="选择要去水印的图片，最多 120 张" />
-        <button id="wmDrop" class="tool-drop" type="button"><svg aria-hidden="true"><use href="#i-upload"></use></svg><strong>点击选择或拖入图片 · 最多 120 张</strong><span>PNG、JPG、WebP · 每张最大 40 MB / 1200 万像素</span></button>
+        <button id="wmDrop" class="tool-drop" type="button"><svg aria-hidden="true"><use href="#i-upload"></use></svg><strong>点击选择或拖入图片 · 最多 120 张</strong><span>PNG、JPG、WebP · 不限制单文件大小、像素和边长</span></button>
         ${renderWatermarkBatch()}
         <div id="wmPreview" hidden>
           <p id="wmFilename" class="tool-filename"></p>
@@ -103,8 +102,8 @@ export function mountWatermarkWorkspace(root, on) {
     stop(); clearResult(); regions = []; selected.clear(); busy = true; renderRegions(); status("正在本地查找低对比、文字状水印…");
     const current = revision;
     worker = new Worker(workerURL);
-    timer = setTimeout(() => { if (current !== revision) return; stop(); busy = false; controls(); status("识别超时，请裁小图片后重试。", true); }, 60000);
-    worker.onerror = () => { if (current !== revision || disposed) return; stop(); busy = false; controls(); status("图片处理程序加载失败，请刷新页面后重试。", true); };
+    timer = setTimeout(() => { if (current !== revision) return; stop(); busy = false; controls(); status("识别超时，请关闭其他占用内存的页面后重试；大图处理耗时较长。", true); }, 180000);
+    worker.onerror = () => { if (current !== revision || disposed) return; stop(); busy = false; controls(); status("图片处理程序加载失败或浏览器内存不足，请关闭其他页面后重试。", true); };
     worker.onmessage = async ({ data }) => {
       if (disposed || current !== revision) return;
       clearTimeout(timer);
@@ -113,14 +112,23 @@ export function mountWatermarkWorkspace(root, on) {
         ready = true; busy = false; regions = data.regions; selected = new Set(regions.map((region) => String(region.id))); renderRegions();
         status(regions.length ? `找到 ${regions.length} 处疑似区域。请检查红框，确认后可一键去除；正文不要勾选。` : "未发现可靠的文字水印区域，可以手动框选后修复。");
       } else if (data.type === "done") {
-        const image = new ImageData(new Uint8ClampedArray(data.data), data.width, data.height);
-        const output = document.createElement("canvas"); output.width = data.width; output.height = data.height; output.getContext("2d").putImageData(image, 0, 0);
-        const blob = await new Promise((resolve) => output.toBlob(resolve, "image/png"));
-        if (disposed || current !== revision) return;
-        if (!blob) { busy = false; controls(); status("PNG 导出失败，请重试。", true); return; }
-        result = image; url = URL.createObjectURL(blob); $("wmDownload").href = url; $("wmDownload").download = `${filename.replace(/\.[^.]+$/, "")}-去水印.png`; $("wmDownload").hidden = false;
-        $("wmResultOption").disabled = false; $("wmView").value = "result"; $("wmShowRegions").checked = false;
-        busy = false; controls(); draw(); status(`已修复 ${selected.size} 处选区，处理 ${data.pixels.toLocaleString()} 个像素。可切换原图对比并下载 PNG。`);
+        const output = document.createElement("canvas");
+        try {
+          const image = new ImageData(data.data, data.width, data.height);
+          output.width = data.width; output.height = data.height;
+          const context = output.getContext("2d");
+          if (!context) throw new Error("浏览器无法分配导出画布，请关闭其他占用内存的页面后重试。");
+          context.putImageData(image, 0, 0);
+          const blob = await new Promise((resolve) => output.toBlob(resolve, "image/png"));
+          if (disposed || current !== revision) return;
+          if (!blob) throw new Error("浏览器无法导出此尺寸的 PNG，请释放内存或更换桌面浏览器后重试。");
+          result = image; url = URL.createObjectURL(blob); $("wmDownload").href = url; $("wmDownload").download = `${filename.replace(/\.[^.]+$/, "")}-去水印.png`; $("wmDownload").hidden = false;
+          $("wmResultOption").disabled = false; $("wmView").value = "result"; $("wmShowRegions").checked = false;
+          busy = false; controls(); draw(); status(`已修复 ${selected.size} 处选区，处理 ${data.pixels.toLocaleString()} 个像素。可切换原图对比并下载 PNG。`);
+        } catch (error) {
+          if (disposed || current !== revision) return;
+          busy = false; controls(); status(`PNG 导出失败：${error.message}`, true);
+        } finally { output.width = output.height = 1; }
       }
     };
     const buffer = source.data.slice().buffer;
@@ -129,8 +137,9 @@ export function mountWatermarkWorkspace(root, on) {
   async function choose(file) {
     if (!file || disposed) return;
     stop(); clearResult(); source = null; regions = []; selected.clear(); busy = false; manual = false; drag = null;
+    canvas.width = canvas.height = overlay.width = overlay.height = 1;
     $("wmManual").setAttribute("aria-pressed", "false"); $("wmPreview").hidden = true; $("wmDrop").hidden = false; $("wmFile").value = ""; renderRegions();
-    if (!file.size || file.size > 40 * 1024 * 1024) return status("请选择非空、40 MB 以内的 PNG、JPG 或 WebP 图片。", true);
+    if (!file.size) return status("图片文件为空，请重新选择 PNG、JPG 或 WebP 图片。", true);
     if (!/\.(png|jpe?g|webp)$/i.test(file.name) || file.type && !["image/png", "image/jpeg", "image/webp"].includes(file.type)) return status("暂时仅支持静态 PNG、JPG 和 WebP；GIF 请先导出需要处理的帧。", true);
     const current = revision;
     busy = true; controls(); status("正在读取图片…");
@@ -138,11 +147,13 @@ export function mountWatermarkWorkspace(root, on) {
     try {
       bitmap = await createImageBitmap(file);
       if (disposed || current !== revision) return;
-      if (bitmap.width * bitmap.height > MAX_WATERMARK_PIXELS || bitmap.width > 8192 || bitmap.height > 8192) throw new Error("图片超过 1200 万像素或最长边 8192 px，请裁小后重试。");
       canvas.width = overlay.width = bitmap.width; canvas.height = overlay.height = bitmap.height;
-      canvas.getContext("2d").drawImage(bitmap, 0, 0); source = canvas.getContext("2d").getImageData(0, 0, bitmap.width, bitmap.height);
-      filename = file.name; $("wmFilename").textContent = `${file.name} · ${bitmap.width} × ${bitmap.height} px`;
-      $("wmWidth").value = Math.min(40, bitmap.width); $("wmHeight").value = Math.min(20, bitmap.height);
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("浏览器无法分配这张大图的画布，请释放内存或更换桌面浏览器后重试。");
+      context.drawImage(bitmap, 0, 0); bitmap.close(); bitmap = null;
+      source = context.getImageData(0, 0, canvas.width, canvas.height);
+      filename = file.name; $("wmFilename").textContent = `${file.name} · ${canvas.width} × ${canvas.height} px`;
+      $("wmWidth").value = Math.min(40, canvas.width); $("wmHeight").value = Math.min(20, canvas.height);
       $("wmPreview").hidden = false; $("wmDrop").hidden = true; $("wmShowRegions").checked = true; $("wmZoom").value = "1";
       busy = false; draw(); analyze();
     } catch (error) { if (disposed || current !== revision) return; busy = false; controls(); status(error.message === "The source image could not be decoded." ? "无法读取图片，请确认文件没有损坏。" : `无法读取图片：${error.message}`, true); }
@@ -192,12 +203,12 @@ export function mountWatermarkWorkspace(root, on) {
     if (!ready || busy || !selected.size) return;
     clearResult(); busy = true; controls(); status(`正在修复 ${selected.size} 处选区…`);
     const current = revision;
-    timer = setTimeout(() => { if (current !== revision) return; stop(); busy = false; controls(); status("修复超时，请缩小选区后重新识别。", true); }, 60000);
+    timer = setTimeout(() => { if (current !== revision) return; stop(); busy = false; controls(); status("修复超时，请关闭其他占用内存的页面后重新识别。", true); }, 180000);
     worker.postMessage({ type: "repair", selected: regions.filter((r) => !r.manual && selected.has(String(r.id))).map((r) => r.id), rectangles: regions.filter((r) => r.manual && selected.has(String(r.id))) });
   });
   on($("wmUndo"), "click", () => { clearResult(); $("wmShowRegions").checked = true; controls(); draw(); status("已恢复原图预览，选区仍保留，可调整后重新修复。"); });
   for (const id of ["wmView", "wmZoom", "wmShowRegions"]) on($(id), "change", draw);
   on(window, "resize", draw);
   controls();
-  return { show: draw, leave() { cancel(); batch.cancel(); }, dispose() { disposed = true; stop(); clearResult(); batch.dispose(); source = result = null; regions = []; selected.clear(); } };
+  return { show: draw, leave() { cancel(); batch.cancel(); }, dispose() { disposed = true; stop(); clearResult(); batch.dispose(); source = result = null; regions = []; selected.clear(); canvas.width = canvas.height = overlay.width = overlay.height = 1; } };
 }

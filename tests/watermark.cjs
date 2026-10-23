@@ -46,8 +46,29 @@ async function unit() {
   ctx.clearRect(0, 0, 80, 40);
   const transparent = ctx.getImageData(0, 0, 80, 40);
   assert.equal(detectWatermarks(transparent).regions.length, 0);
-  assert.throws(() => detectWatermarks({ width: 80, height: 40, data: new Uint8Array(8) }), /尺寸无效/);
+  assert.throws(() => detectWatermarks({ width: 80, height: 40, data: new Uint8Array(8) }), /数据无效/);
   assert.throws(() => repairWatermarks(image, analysis, [], [{ x: NaN, y: 0, width: 8, height: 8 }]), /选区无效/);
+  const large = createCanvas(3300, 1800), largeCtx = large.getContext("2d");
+  largeCtx.fillStyle = "#101010"; largeCtx.fillRect(0, 0, large.width, large.height);
+  largeCtx.fillStyle = "#fff"; largeCtx.font = "26px Arial"; largeCtx.fillText("Original protected heading", 1450, 60);
+  for (const [x, y] of [[1500, 1540], [3050, 1550], [1500, 700], [80, 1540]]) {
+    largeCtx.save(); largeCtx.translate(x, y); largeCtx.rotate(-.32); largeCtx.fillStyle = "#333"; largeCtx.font = "15px Arial";
+    largeCtx.fillText("SAMPLE", 0, 0); largeCtx.fillText("MARK", 0, 17); largeCtx.restore();
+  }
+  const largeImage = largeCtx.getImageData(0, 0, large.width, large.height), tiled = detectWatermarks(largeImage);
+  assert.equal(tiled.tiled, true); assert.ok(tiled.regions.length >= 4);
+  const largeResult = repairWatermarks(largeImage, tiled, tiled.regions.map((r) => r.id));
+  assert.deepEqual(largeResult.data.subarray(0, large.width * 80 * 4), largeImage.data.subarray(0, large.width * 80 * 4), "heading crossing block edges must survive");
+  for (const [left, top] of [[1480, 1480], [3030, 1490], [1480, 640], [60, 1480]]) {
+    let residual = 0;
+    for (let y = top; y < top + 100; y++) for (let x = left; x < left + 150; x++) if (Math.abs(largeResult.data[(y * large.width + x) * 4] - 16) > 4) residual++;
+    assert.ok(residual < 10, `no watermark fragments at tiled seams: ${left},${top}, residual ${residual}`);
+  }
+  const partial = repairWatermarks(largeImage, tiled, [tiled.regions[0].id]);
+  for (let i = 0; i < tiled.labels.length; i++) if (tiled.labels[i] !== tiled.regions[0].id) {
+    for (let c = 0; c < 4; c++) assert.equal(partial.data[i * 4 + c], largeImage.data[i * 4 + c], "tile-local choices must not change other blocks");
+  }
+  console.log("PASS: overlapping block recognition removes stamps across horizontal/vertical/corner seams, with exact foreground and unselected-pixel preservation.");
   console.log("PASS: repeated faint text detection on dark/light backgrounds, exact heading protection, independent selections, manual background repair, alpha preservation, immutable originals and safety validation.");
 }
 
@@ -109,10 +130,7 @@ async function browserTest() {
     await page.locator("#wmFile").setInputFiles({ name: "bad.png", mimeType: "image/png", buffer: Buffer.from("broken") }); await page.waitForFunction(() => document.querySelector("#wmStatus").classList.contains("is-error"));
     assert.equal(await page.locator("#wmDownload").isVisible(), false); assert.equal(await page.locator("#wmRepair").isDisabled(), true);
     await page.locator("#wmFile").setInputFiles({ name: "animation.gif", mimeType: "image/gif", buffer: Buffer.from("GIF89a") }); assert.match(await page.locator("#wmStatus").textContent(), /静态/);
-    await page.locator("#wmFile").setInputFiles({ name: "large.png", mimeType: "image/png", buffer: Buffer.alloc(40 * 1024 * 1024 + 1) }); assert.match(await page.locator("#wmStatus").textContent(), /40 MB/);
-    const wide = createCanvas(8193, 1);
-    await page.locator("#wmFile").setInputFiles({ name: "wide.png", mimeType: "image/png", buffer: await wide.encode("png") });
-    await page.waitForFunction(() => document.querySelector("#wmStatus").textContent.includes("8192"));
+    await largeImageChecks(page, png, sample);
     let holdWorker;
     const held = new Promise((resolve) => { holdWorker = resolve; });
     await page.route("**/watermark-worker.js?*", async (route) => { await held; await route.continue().catch(() => {}); });
@@ -126,6 +144,44 @@ async function browserTest() {
     assert.deepEqual(errors, []); assert.deepEqual(writes, []);
     console.log("PASS: toolbox navigation, actual local worker recognition/repair and PNG download, original comparison, manual selection at 200% zoom, selection invalidation, corrupt/animated rejection, cleanup and no image uploads.");
   } finally { await browser.close(); await new Promise((resolve) => server.close(resolve)); }
+}
+
+async function largeImageChecks(page, png, sample) {
+  const padded = { name: "over-40mb.png", mimeType: "image/png", buffer: Buffer.concat([png, Buffer.alloc(40 * 1024 * 1024)]) };
+  await page.locator("#wmFile").setInputFiles(padded);
+  await page.waitForFunction(() => !document.querySelector("#wmRepair").disabled);
+  assert.equal(await page.locator("#wmStatus").evaluate((el) => el.classList.contains("is-error")), false);
+  const canvas = createCanvas(9000, 1344), ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#101010"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  for (const x of [0, 2900, 8100]) ctx.drawImage(sample.canvas, x, 0);
+  const large = { name: "large-original.png", mimeType: "image/png", buffer: await canvas.encode("png") };
+  await page.locator("#wmFile").setInputFiles(large);
+  await page.waitForFunction(() => !document.querySelector("#wmRepair").disabled, null, { timeout: 180000 });
+  assert.match(await page.locator("#wmFilename").textContent(), /9000 × 1344/);
+  assert.equal(await page.locator("#wmCanvas").getAttribute("width"), "9000");
+  await page.locator("#wmRepair").click(); await page.locator("#wmDownload").waitFor({ state: "visible", timeout: 180000 });
+  const pending = page.waitForEvent("download"); await page.locator("#wmDownload").click();
+  const exported = await fs.readFile(await (await pending).path());
+  assert.equal(exported.readUInt32BE(16), 9000); assert.equal(exported.readUInt32BE(20), 1344);
+  const output = await loadImage(exported), crop = createCanvas(720, 200), cropped = crop.getContext("2d"); cropped.drawImage(output, 0, 0);
+  const pixels = cropped.getImageData(0, 0, 720, 200).data;
+  assert.deepEqual(pixels.subarray(0, 70 * 720 * 4), sample.image.data.subarray(0, 70 * 720 * 4));
+  let residual = 0;
+  for (let y = 90; y < 185; y++) for (let x = 20; x < 700; x++) if (Math.abs(pixels[(y * 720 + x) * 4] - 16) > 4) residual++;
+  assert.ok(residual < 40);
+  await page.locator("#wmFile").setInputFiles([large, padded]);
+  await page.locator("#wmBatchStart").click();
+  await page.waitForFunction(() => document.querySelector("#wmBatchProgress").value === 2 && document.querySelector("#wmBatchCancel").hidden, null, { timeout: 180000 });
+  assert.match(await page.locator("#wmBatchStatus").textContent(), /已导出 2 张.*失败 0 张/);
+  const zipPending = page.waitForEvent("download"); await page.locator("#wmBatchZip").click();
+  const entries = unzipSync(await fs.readFile(await (await zipPending).path()));
+  const first = Buffer.from(entries["001-large-original-去水印.png"]), second = Buffer.from(entries["002-over-40mb-去水印.png"]);
+  assert.equal(first.readUInt32BE(16), 9000); assert.equal(first.readUInt32BE(20), 1344);
+  assert.equal(second.readUInt32BE(16), 720); assert.equal(second.readUInt32BE(20), 200);
+  // Return to the single-file editor before the existing cancellation checks.
+  await page.locator("#wmFile").setInputFiles({ name: "sample.png", mimeType: "image/png", buffer: png });
+  await page.waitForFunction(() => !document.querySelector("#wmRepair").disabled);
+  console.log("PASS: >40 MB files and >12-million-pixel / >8192-pixel-edge images are processed and downloaded at original dimensions in both single and batch modes.");
 }
 
 async function batchChecks(page, png, sample) {
