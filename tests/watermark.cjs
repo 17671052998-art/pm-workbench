@@ -141,7 +141,7 @@ async function batchChecks(page, png, sample) {
   assert.equal(await page.locator("#wmBatchZip").isDisabled(), true);
   await page.locator("#wmBatchStart").click();
   assert.equal(await page.locator("#wmStrength").isDisabled(), true);
-  await page.waitForFunction(() => document.querySelector("#wmBatchProgress").value === 120 && document.querySelector("#wmBatchCancel").hidden, { timeout: 180000 });
+  await page.waitForFunction(() => document.querySelector("#wmBatchProgress").value === 120 && document.querySelector("#wmBatchCancel").hidden, null, { timeout: 180000 });
   assert.match(await page.locator("#wmBatchStatus").textContent(), /已导出 120 张.*1 张未识别.*失败 0 张/);
   assert.equal(await page.locator("#wmBatchList a[download]").count(), 120);
   const downloadPromise = page.waitForEvent("download"); await page.locator("#wmBatchZip").click(); const download = await downloadPromise;
