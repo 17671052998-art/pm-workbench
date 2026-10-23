@@ -3,7 +3,12 @@ import { detectWatermarks, repairWatermarks } from "./watermark-core.mjs";
 let image, analysis;
 self.onmessage = ({ data }) => {
   try {
-    if (data.type === "analyze") {
+    if (data.type === "batch") {
+      const source = { width: data.width, height: data.height, data: new Uint8ClampedArray(data.buffer) };
+      const detected = detectWatermarks(source, data.options);
+      const result = detected.regions.length ? repairWatermarks(source, detected, detected.regions.map((region) => region.id)) : source;
+      self.postMessage({ type: "batch-done", ...result, regions: detected.regions.length }, [result.data.buffer]);
+    } else if (data.type === "analyze") {
       analysis = null;
       image = { width: data.width, height: data.height, data: new Uint8ClampedArray(data.buffer) };
       analysis = detectWatermarks(image, data.options);

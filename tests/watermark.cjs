@@ -4,6 +4,7 @@ const path = require("node:path");
 const http = require("node:http");
 const { createCanvas, loadImage, ImageData } = require("@napi-rs/canvas");
 const { chromium } = require("playwright");
+const { unzipSync } = require("fflate");
 
 function fixture(light = false) {
   const canvas = createCanvas(720, 200), ctx = canvas.getContext("2d");
@@ -118,12 +119,95 @@ async function browserTest() {
     await upload(); await page.locator("#wmCancel").waitFor({ state: "visible" }); await page.locator("#wmCancel").click();
     assert.match(await page.locator("#wmStatus").textContent(), /已取消/); assert.equal(await page.locator("#wmRepair").isDisabled(), true);
     holdWorker(); await page.unroute("**/watermark-worker.js?*");
+    await batchChecks(page, png, sample);
     await upload(); await page.waitForFunction(() => !document.querySelector("#wmRepair").disabled);
     await page.locator('[data-page="dashboard"]').click(); await page.locator('[data-page="tools"]').click(); await page.locator("#wmToolOpen").click();
     assert.equal(await page.locator("#wmRepair").isDisabled(), true); assert.equal(await page.locator("#wmPreview").isVisible(), false);
     assert.deepEqual(errors, []); assert.deepEqual(writes, []);
     console.log("PASS: toolbox navigation, actual local worker recognition/repair and PNG download, original comparison, manual selection at 200% zoom, selection invalidation, corrupt/animated rejection, cleanup and no image uploads.");
   } finally { await browser.close(); await new Promise((resolve) => server.close(resolve)); }
+}
+
+async function batchChecks(page, png, sample) {
+  const file = { name: "same.png", mimeType: "image/png", buffer: png };
+  await page.locator("#wmFile").setInputFiles(Array.from({ length: 121 }, () => file));
+  assert.match(await page.locator("#wmStatus").textContent(), /最多处理 120/);
+  assert.equal(await page.locator("#wmBatch").isVisible(), false);
+  const transparent = createCanvas(16, 12), blank = await transparent.encode("png");
+  const files = Array.from({ length: 119 }, () => file).concat({ name: "empty.png", mimeType: "image/png", buffer: blank });
+  await page.locator("#wmFile").setInputFiles(files);
+  assert.equal(await page.locator("#wmBatchList tr").count(), 120);
+  assert.equal(await page.locator("#wmPreview").isVisible(), false);
+  assert.equal(await page.locator("#wmBatchZip").isDisabled(), true);
+  await page.locator("#wmBatchStart").click();
+  assert.equal(await page.locator("#wmStrength").isDisabled(), true);
+  await page.waitForFunction(() => document.querySelector("#wmBatchProgress").value === 120 && document.querySelector("#wmBatchCancel").hidden, { timeout: 180000 });
+  assert.match(await page.locator("#wmBatchStatus").textContent(), /已导出 120 张.*1 张未识别.*失败 0 张/);
+  assert.equal(await page.locator("#wmBatchList a[download]").count(), 120);
+  const downloadPromise = page.waitForEvent("download"); await page.locator("#wmBatchZip").click(); const download = await downloadPromise;
+  assert.match(download.suggestedFilename(), /120张\.zip$/);
+  const entries = unzipSync(await fs.readFile(await download.path()));
+  assert.equal(Object.keys(entries).length, 120);
+  assert.equal(new Set(Object.keys(entries)).size, 120, "duplicate input names must never overwrite exports");
+  assert.ok(Object.keys(entries).every((name) => /^\d{3}-[^/\\]+\.png$/.test(name)));
+  const output = await loadImage(entries["001-same-去水印.png"]), canvas = createCanvas(output.width, output.height), ctx = canvas.getContext("2d"); ctx.drawImage(output, 0, 0);
+  assert.equal(output.width, 720); assert.equal(output.height, 200);
+  const data = ctx.getImageData(0, 0, 720, 200).data;
+  assert.deepEqual(data.subarray(0, 70 * 720 * 4), sample.image.data.subarray(0, 70 * 720 * 4), "batch preserves original foreground text");
+  let residual = 0;
+  for (let y = 90; y < 185; y++) for (let x = 20; x < 700; x++) if (Math.abs(data[(y * 720 + x) * 4] - 16) > 4) residual++;
+  assert.ok(residual < 40, "batch exports must actually remove the detected stamps");
+  const empty = await loadImage(entries["120-empty-去水印.png"]); assert.equal(empty.width, 16); assert.equal(empty.height, 12);
+  const emptyCanvas = createCanvas(16, 12), emptyCtx = emptyCanvas.getContext("2d"); emptyCtx.drawImage(empty, 0, 0);
+  assert.ok(emptyCtx.getImageData(0, 0, 16, 12).data.every((value) => value === 0), "unrecognized transparent image remains unchanged");
+  await page.screenshot({ path: "/tmp/pm-workbench-watermark-batch-120.png", fullPage: true });
+  await page.locator("#wmStrength").evaluate((input) => { input.value = "55"; input.dispatchEvent(new Event("change", { bubbles: true })); });
+  assert.equal(await page.locator("#wmBatchArchive").isVisible(), false);
+  assert.equal(await page.locator("#wmBatchZip").isDisabled(), true);
+  assert.equal(await page.locator("#wmBatchList a[download]:visible").count(), 0);
+
+  // A broken worker and corrupt input must fail independently, without stopping the queue.
+  const bad = { name: "broken.png", mimeType: "image/png", buffer: Buffer.from("broken") };
+  await page.locator("#wmFile").setInputFiles([file, bad]);
+  await page.route("**/watermark-worker.js?*", (route) => route.abort());
+  await page.locator("#wmBatchStart").click();
+  await page.waitForFunction(() => document.querySelector("#wmBatchProgress").value === 2 && document.querySelector("#wmBatchCancel").hidden);
+  assert.match(await page.locator("#wmBatchStatus").textContent(), /失败 2 张/);
+  await page.unroute("**/watermark-worker.js?*"); await page.locator("#wmBatchRetry").click();
+  await page.waitForFunction(() => document.querySelector("#wmBatchProgress").value === 2 && document.querySelector("#wmBatchCancel").hidden);
+  assert.match(await page.locator("#wmBatchStatus").textContent(), /已导出 1 张.*失败 1 张/);
+  const partialPromise = page.waitForEvent("download"); await page.locator("#wmBatchZip").click();
+  const partial = unzipSync(await fs.readFile(await (await partialPromise).path()));
+  assert.equal(Object.keys(partial).length, 1);
+
+  await page.locator("#wmFile").setInputFiles([file, file]);
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  await page.route("**/watermark-worker.js?*", async (route) => { await held; await route.continue().catch(() => {}); });
+  await page.locator("#wmBatchStart").click(); await page.locator("#wmBatchCancel").click();
+  assert.match(await page.locator("#wmBatchStatus").textContent(), /待处理 2 张/);
+  assert.equal(await page.locator("#wmBatchZip").isDisabled(), true);
+  release(); await page.unroute("**/watermark-worker.js?*");
+  await page.locator("#wmBatchStart").click();
+  await page.waitForFunction(() => document.querySelector("#wmBatchProgress").value === 2 && document.querySelector("#wmBatchCancel").hidden);
+  assert.match(await page.locator("#wmBatchStatus").textContent(), /已导出 2 张.*失败 0 张/);
+
+  await page.locator("#wmFile").setInputFiles([file, file]);
+  let releaseSecond, requests = 0;
+  const secondHeld = new Promise((resolve) => { releaseSecond = resolve; });
+  await page.route("**/watermark-worker.js?*", async (route) => { if (++requests > 1) await secondHeld; await route.continue().catch(() => {}); });
+  await page.locator("#wmBatchStart").click();
+  await page.waitForFunction(() => document.querySelector("#wmBatchProgress").value === 1 && !document.querySelector("#wmBatchCancel").hidden);
+  await page.locator("#wmBatchCancel").click();
+  assert.match(await page.locator("#wmBatchStatus").textContent(), /已导出 1 张.*待处理 1 张/);
+  assert.equal(await page.locator("#wmBatchZip").isDisabled(), false);
+  releaseSecond(); await page.unroute("**/watermark-worker.js?*");
+  await page.locator("#wmBatchStart").click();
+  await page.waitForFunction(() => document.querySelector("#wmBatchProgress").value === 2 && document.querySelector("#wmBatchCancel").hidden);
+  await page.locator('[data-page="dashboard"]').click(); await page.locator('[data-page="tools"]').click(); await page.locator("#wmToolOpen").click();
+  assert.equal(await page.locator("#wmBatch").isVisible(), false);
+  assert.equal(await page.locator("#wmBatchList tr").count(), 0);
+  console.log("PASS: 120 real image exports, 121 rejection, unique ZIP entries, watermark removal, foreground/alpha preservation, unchanged-image labeling, settings invalidation, isolated failures/retry, partial ZIP, pause/resume and single-editor switching.");
 }
 
 unit().then(browserTest).catch((error) => { console.error(error); process.exitCode = 1; });

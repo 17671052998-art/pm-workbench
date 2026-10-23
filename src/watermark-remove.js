@@ -1,7 +1,8 @@
 import { MAX_WATERMARK_PIXELS } from "./watermark-core.mjs";
+import { MAX_WATERMARK_FILES, renderWatermarkBatch, mountWatermarkBatch } from "./watermark-batch.js";
 
 const workerURL = new URL("./watermark-worker.js", document.currentScript.src);
-workerURL.search = "v=watermark-1";
+workerURL.search = "v=watermark-batch-2";
 
 export function renderWatermarkWorkspace() {
   return `<section id="wmWorkspace" class="panel tool-workspace" aria-labelledby="wmTitle" hidden>
@@ -9,8 +10,9 @@ export function renderWatermarkWorkspace() {
     <div class="tool-columns wm-columns">
       <div class="tool-source">
         <h3>1. 上传与预览</h3>
-        <input id="wmFile" class="tool-file-input" type="file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp" aria-label="选择要去水印的图片" />
-        <button id="wmDrop" class="tool-drop" type="button"><svg aria-hidden="true"><use href="#i-upload"></use></svg><strong>点击选择或拖入图片</strong><span>PNG、JPG、WebP · 最大 40 MB / 1200 万像素</span></button>
+        <input id="wmFile" class="tool-file-input" type="file" multiple accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp" aria-label="选择要去水印的图片，最多 120 张" />
+        <button id="wmDrop" class="tool-drop" type="button"><svg aria-hidden="true"><use href="#i-upload"></use></svg><strong>点击选择或拖入图片 · 最多 120 张</strong><span>PNG、JPG、WebP · 每张最大 40 MB / 1200 万像素</span></button>
+        ${renderWatermarkBatch()}
         <div id="wmPreview" hidden>
           <p id="wmFilename" class="tool-filename"></p>
           <div class="wm-preview-toolbar"><label>查看<select id="wmView"><option value="original">原图与选区</option><option id="wmResultOption" value="result" disabled>处理结果</option></select></label><label>缩放<select id="wmZoom"><option value="1">适应宽度</option><option value="1.5">150%</option><option value="2">200%</option><option value="3">300%</option></select></label><label><input id="wmShowRegions" type="checkbox" checked /> 显示选区</label></div>
@@ -21,17 +23,19 @@ export function renderWatermarkWorkspace() {
         <p id="wmStatus" class="tool-status" role="status" aria-live="polite">图片只在本机处理，不上传服务器，不调用付费 AI。</p>
       </div>
       <div class="tool-settings">
-        <h3>2. 识别与修复</h3>
+        <h3 id="wmSettingsTitle">2. 识别与修复</h3>
         <p class="tool-output-hint">适合纯色底、近似纯色底上的半透明重复文字，包括示例中的斜排灰色水印。不是通用 OCR，不能保证识别任意水印文字。</p>
         <label class="form-label" for="wmStrength">识别强度 <strong id="wmStrengthValue">55</strong><input id="wmStrength" class="bg-range" type="range" min="15" max="100" value="55" /></label>
         <label class="form-label" for="wmDirection">水印颜色<select id="wmDirection"><option value="auto">自动：浅色或深色水印</option><option value="light">比背景浅</option><option value="dark">比背景深</option></select></label>
         <label class="wm-protection"><input id="wmProtect" type="checkbox" checked /> 保护高对比正文（推荐）</label>
+        <div id="wmSingleSettings">
         <div class="tool-actions"><button id="wmAnalyze" class="btn secondary" type="button" disabled>重新识别水印</button><button id="wmCancel" class="btn secondary" type="button" hidden>取消处理</button></div>
         <p class="tool-hint">上传后自动识别。调整设置需重新识别，会重置现有选区；强度过高可能选中原有图形。</p>
         <section class="wm-regions" aria-labelledby="wmRegionsTitle"><div class="wm-region-heading"><h4 id="wmRegionsTitle">待处理区域 <span id="wmCount">0 / 0</span></h4><div><button id="wmAll" type="button" disabled>全选</button><button id="wmNone" type="button" disabled>全不选</button></div></div><div id="wmRegionList" class="wm-region-list"><p>上传图片后显示识别区域，也可以手动补充。</p></div></section>
         <details class="wm-coordinates"><summary>精确添加手动选区</summary><div class="wm-coordinate-grid">${[["X", "wmX", 0], ["Y", "wmY", 0], ["宽度", "wmWidth", 40], ["高度", "wmHeight", 20]].map(([label, id, value]) => `<label for="${id}">${label}<input id="${id}" type="number" min="${id === "wmX" || id === "wmY" ? 0 : 1}" value="${value}" /></label>`).join("")}</div><button id="wmAddRect" class="btn secondary" type="button" disabled>添加选区</button></details>
         <button id="wmRepair" class="btn primary wm-full-action" type="button" disabled>一键去除已选水印</button>
         <a id="wmDownload" class="btn secondary wm-full-action" hidden>下载处理后的 PNG</a>
+        </div>
         <p class="tool-hint">会填补选中区域，不会让其变透明。照片、纹理或覆盖正文的水印无法保证无痕；请对比原图检查后再使用。</p>
       </div>
     </div>
@@ -40,12 +44,14 @@ export function renderWatermarkWorkspace() {
 
 export function mountWatermarkWorkspace(root, on) {
   const $ = (id) => root.querySelector(`#${id}`);
-  let source = null, result = null, filename = "", regions = [], selected = new Set(), worker = null, revision = 0, timer, busy = false, ready = false, disposed = false, url = null, drag = null, manual = false, manualId = 0;
+  let source = null, result = null, filename = "", regions = [], selected = new Set(), worker = null, revision = 0, timer, busy = false, ready = false, disposed = false, url = null, drag = null, manual = false, manualId = 0, batch;
   const canvas = $("wmCanvas"), overlay = $("wmOverlay");
   const status = (message, error = false) => { $("wmStatus").textContent = message; $("wmStatus").classList.toggle("is-error", error); };
   function stop() { worker?.terminate(); worker = null; ready = false; clearTimeout(timer); revision++; }
   function controls() {
-    for (const id of ["wmStrength", "wmDirection", "wmProtect", "wmReplace"]) $(id).disabled = busy;
+    $("wmSingleSettings").hidden = Boolean(batch?.hasFiles);
+    $("wmSettingsTitle").textContent = batch?.hasFiles ? "2. 批量识别设置" : "2. 识别与修复";
+    for (const id of ["wmStrength", "wmDirection", "wmProtect", "wmReplace"]) $(id).disabled = busy || Boolean(batch?.busy);
     $("wmAnalyze").disabled = !source || busy;
     $("wmRepair").disabled = !source || !ready || busy || !selected.size;
     $("wmManual").disabled = $("wmAddRect").disabled = !source || !ready || busy;
@@ -151,14 +157,26 @@ export function mountWatermarkWorkspace(root, on) {
     clearResult(); const id = `manual-${++manualId}`; regions.push({ id, ...box, manual: true }); selected.add(id); $("wmShowRegions").checked = true; renderRegions(); status("手动选区已添加。请确认没有覆盖正文，再点击一键去除。");
   }
   function cancel() { if (!busy) return; stop(); busy = false; controls(); status("已取消处理。请点击重新识别，再继续修复。"); }
-  on($("wmFile"), "change", (event) => choose(event.target.files[0]));
+  batch = mountWatermarkBatch(root, on, { workerURL, getOptions: () => ({ strength: Number($("wmStrength").value), direction: $("wmDirection").value, protectText: $("wmProtect").checked }), onStateChange: controls });
+  function chooseFiles(list) {
+    const files = Array.from(list); $("wmFile").value = "";
+    if (!files.length) return;
+    if (files.length > MAX_WATERMARK_FILES) return status("一次最多处理 120 张图片，请减少所选数量后重试。", true);
+    batch.clear();
+    if (files.length === 1) return choose(files[0]);
+    stop(); clearResult(); source = null; regions = []; selected.clear(); busy = false; drag = null; manual = false;
+    canvas.width = canvas.height = overlay.width = overlay.height = 1;
+    $("wmManual").setAttribute("aria-pressed", "false"); $("wmPreview").hidden = true; $("wmDrop").hidden = true;
+    batch.setFiles(files); renderRegions(); status(`已加入 ${files.length} 张图片。确认右侧识别设置后，点击“开始批量处理”。`);
+  }
+  on($("wmFile"), "change", (event) => chooseFiles(event.target.files));
   for (const id of ["wmDrop", "wmReplace"]) on($(id), "click", () => $("wmFile").click());
   on($("wmWorkspace"), "dragover", (event) => { event.preventDefault(); $("wmDrop").classList.add("is-dragging"); });
   on($("wmWorkspace"), "dragleave", (event) => { if (!$("wmWorkspace").contains(event.relatedTarget)) $("wmDrop").classList.remove("is-dragging"); });
-  on($("wmWorkspace"), "drop", (event) => { event.preventDefault(); $("wmDrop").classList.remove("is-dragging"); if (event.dataTransfer.files.length !== 1) return status("每次请选择一张图片。", true); choose(event.dataTransfer.files[0]); });
+  on($("wmWorkspace"), "drop", (event) => { event.preventDefault(); $("wmDrop").classList.remove("is-dragging"); chooseFiles(event.dataTransfer.files); });
   on($("wmAnalyze"), "click", analyze);
   on($("wmCancel"), "click", cancel);
-  for (const id of ["wmStrength", "wmDirection", "wmProtect"]) on($(id), "change", () => { stop(); clearResult(); regions = []; selected.clear(); $("wmStrengthValue").textContent = $("wmStrength").value; renderRegions(); if (source) status("设置已更改，请重新识别水印。现有选区已清空。"); });
+  for (const id of ["wmStrength", "wmDirection", "wmProtect"]) on($(id), "change", () => { stop(); clearResult(); batch.invalidate(); regions = []; selected.clear(); $("wmStrengthValue").textContent = $("wmStrength").value; renderRegions(); if (source || batch.hasFiles) status("设置已更改，请重新识别或批量处理。现有选区和结果已清空。"); });
   on($("wmStrength"), "input", () => { $("wmStrengthValue").textContent = $("wmStrength").value; });
   on($("wmRegionList"), "change", (event) => { const id = event.target.dataset.wmRegion; if (!id || busy) return; clearResult(); if (event.target.checked) selected.add(id); else selected.delete(id); controls(); draw(); });
   on($("wmRegionList"), "click", (event) => { const id = event.target.dataset.wmRemove; if (!id || busy) return; clearResult(); regions = regions.filter((region) => String(region.id) !== id); selected.delete(id); renderRegions(); });
@@ -181,5 +199,5 @@ export function mountWatermarkWorkspace(root, on) {
   for (const id of ["wmView", "wmZoom", "wmShowRegions"]) on($(id), "change", draw);
   on(window, "resize", draw);
   controls();
-  return { show: draw, leave: cancel, dispose() { disposed = true; stop(); clearResult(); source = result = null; regions = []; selected.clear(); } };
+  return { show: draw, leave() { cancel(); batch.cancel(); }, dispose() { disposed = true; stop(); clearResult(); batch.dispose(); source = result = null; regions = []; selected.clear(); } };
 }
