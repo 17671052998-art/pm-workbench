@@ -14,7 +14,7 @@
   },
   "scripts": {
     "build": "node scripts/build.cjs",
-    "test": "node tests/auth-network.cjs && node tests/auth.cjs && node tests/converter.cjs && node tests/background.cjs && node tests/design.cjs",
+    "test": "node tests/auth-network.cjs && node tests/auth.cjs && node tests/converter.cjs && node tests/background.cjs && node tests/watermark.cjs && node tests/design.cjs",
     "test:auth": "node tests/auth-network.cjs && node tests/auth.cjs"
   },
   "dependencies": {

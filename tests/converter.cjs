@@ -76,7 +76,7 @@ async function main() {
     await page.locator('[data-page="tools"]').click();
     assert.equal(await page.locator("#toolCatalog").isVisible(), true);
     assert.equal(await page.locator("#toolWorkspace").isVisible(), false);
-    assert.match(await page.locator("#toolCatalog").textContent(), /3 个工具/);
+    assert.match(await page.locator("#toolCatalog").textContent(), /4 个工具/);
     await page.locator("#designToolOpen").click();
     assert.equal(await page.locator("#designWorkspace").isVisible(), true);
     assert.equal(await page.locator("#designFile").count(), 1);

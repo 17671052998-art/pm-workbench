@@ -61,7 +61,7 @@ async function main() {
     await page.locator("#appShell").waitFor({ state: "visible" });
     await page.locator('[data-page="tools"]').click();
     assert.equal(await page.locator("#bgWorkspace").isVisible(), false);
-    assert.equal(await page.locator(".tool-card").count(), 3);
+    assert.equal(await page.locator(".tool-card").count(), 4);
     await page.screenshot({ path: "/tmp/pm-workbench-tool-catalog.png", fullPage: true });
     await page.locator("#bgToolOpen").click();
     assert.equal(await page.locator("#bgWorkspace").isVisible(), true);

@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const result = buildSync({
-  entryPoints: ["src/gif-worker.js", "src/background-gif-worker.js", "src/design-worker.js", "src/tools.js"],
+  entryPoints: ["src/gif-worker.js", "src/background-gif-worker.js", "src/design-worker.js", "src/watermark-worker.js", "src/tools.js"],
   bundle: true, minify: true, format: "iife", target: "es2020", outdir: "assets", metafile: true,
   external: ["fs", "path"],
 });

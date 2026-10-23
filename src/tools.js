@@ -1,5 +1,6 @@
 import { mountBackgroundTool } from "./background-remove.js";
 import { mountDesignWorkspace, renderDesignWorkspace } from "./design-convert.js";
+import { mountWatermarkWorkspace, renderWatermarkWorkspace } from "./watermark-remove.js";
 
 const workerURL = new URL("./gif-worker.js", document.currentScript.src);
 workerURL.search = "v=custom-timeline-1";
@@ -9,7 +10,7 @@ function render() {
   return `
     <header class="page-head"><div><h1 class="page-title">工具箱</h1><p class="page-subtitle">处理产品工作中的常用素材与设计文件，减少重复操作。</p></div><span class="badge green">本地处理 · 无需上传</span></header>
     <section id="toolCatalog" class="tool-catalog" aria-labelledby="toolCatalogTitle">
-      <div class="tool-catalog-head"><div><h2 id="toolCatalogTitle">常用工具</h2><p>选择工具后进入操作页面</p></div><span>3 个工具</span></div>
+      <div class="tool-catalog-head"><div><h2 id="toolCatalogTitle">常用工具</h2><p>选择工具后进入操作页面</p></div><span>4 个工具</span></div>
       <div class="tool-catalog-grid">
       <button id="gifToolOpen" class="tool-card" type="button" aria-label="打开 GIF 转 SVGA 工具">
         <span class="tool-card-art" aria-hidden="true">
@@ -58,6 +59,10 @@ function render() {
           </svg>
         </span>
         <span class="tool-card-content"><span class="tool-card-title">设计文件互转</span><span class="tool-card-description">在浏览器内转换 XD、Sketch 和 Figma 文件，直接下载</span><span class="tool-card-meta"><span class="badge">本地转换 · 测试版</span><span>进入工具 <b aria-hidden="true">→</b></span></span></span>
+      </button>
+      <button id="wmToolOpen" class="tool-card" type="button" aria-label="打开去除文字水印工具">
+        <span class="tool-card-art" aria-hidden="true"><svg class="tool-card-picture" viewBox="0 0 320 160"><rect width="320" height="160" rx="18" fill="#56678d"/><rect x="35" y="29" width="250" height="102" rx="12" fill="#fff"/><path d="M55 53h130M55 67h190M55 81h148" stroke="#cbd3e4" stroke-width="7" stroke-linecap="round"/><g transform="rotate(-16 175 104)"><rect x="81" y="87" width="127" height="29" rx="5" fill="#e9ebf3"/><text x="145" y="107" fill="#8994ae" font-size="17" text-anchor="middle">WATERMARK</text></g><path d="m233 90 22 22-27 27-22-22Z" fill="#b4a6f7"/><path d="m206 117 22 22h-27l-8-8Z" fill="#6e6bea"/></svg></span>
+        <span class="tool-card-content"><span class="tool-card-title">去除文字水印</span><span class="tool-card-description">批量识别低对比文字水印，支持手动框选和背景修复</span><span class="tool-card-meta"><span class="badge green">本地处理</span><span>进入工具 <b aria-hidden="true">→</b></span></span></span>
       </button>
       </div>
     </section>
@@ -153,7 +158,8 @@ function render() {
       </div>
       <div class="tool-notes"><strong>使用说明</strong><p>自动处理依据每张图片或每一帧边缘的相近颜色，不是 AI 人像分割。静态图片可用套索或画笔手动调整；GIF 会逐帧自动处理并保留动画节奏和循环信息。</p></div>
     </section>
-    ${renderDesignWorkspace()}`;
+    ${renderDesignWorkspace()}
+    ${renderWatermarkWorkspace()}`;
 }
 
 function mount(root) {
@@ -174,6 +180,7 @@ function mount(root) {
   let converterOpen = false;
   const disposeBackground = mountBackgroundTool(root, on);
   const disposeDesign = mountDesignWorkspace(root, on);
+  const watermark = mountWatermarkWorkspace(root, on);
   root.dataset.previewBackground = "black";
   const formatSize = (bytes) => bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 / 1024).toFixed(2)} MB`;
   const status = (text, error = false) => {
@@ -324,6 +331,7 @@ function mount(root) {
     run(true);
   }
   function showConverter() {
+    $("wmWorkspace").hidden = true;
     converterOpen = true;
     $("toolCatalog").hidden = true;
     $("toolWorkspace").hidden = false;
@@ -332,6 +340,7 @@ function mount(root) {
     $("converterTitle").focus();
   }
   function showBackground() {
+    $("wmWorkspace").hidden = true;
     converterOpen = false;
     $("toolCatalog").hidden = true;
     $("toolWorkspace").hidden = true;
@@ -340,6 +349,7 @@ function mount(root) {
     $("bgTitle").focus();
   }
   function showDesign() {
+    $("wmWorkspace").hidden = true;
     converterOpen = false;
     $("toolCatalog").hidden = true;
     $("toolWorkspace").hidden = true;
@@ -348,7 +358,9 @@ function mount(root) {
     $("designTitle").focus();
   }
   function showCatalog() {
-    const returnTarget = !$("designWorkspace").hidden ? $("designToolOpen") : $("bgWorkspace").hidden ? $("gifToolOpen") : $("bgToolOpen");
+    const returnTarget = !$("wmWorkspace").hidden ? $("wmToolOpen") : !$("designWorkspace").hidden ? $("designToolOpen") : $("bgWorkspace").hidden ? $("gifToolOpen") : $("bgToolOpen");
+    watermark.leave();
+    $("wmWorkspace").hidden = true;
     converterOpen = false;
     $("toolWorkspace").hidden = true;
     $("bgWorkspace").hidden = true;
@@ -362,6 +374,8 @@ function mount(root) {
   on($("bgToolBack"), "click", showCatalog);
   on($("designToolOpen"), "click", showDesign);
   on($("designToolBack"), "click", showCatalog);
+  on($("wmToolOpen"), "click", () => { converterOpen = false; $("toolCatalog").hidden = true; $("toolWorkspace").hidden = $("bgWorkspace").hidden = $("designWorkspace").hidden = true; $("wmWorkspace").hidden = false; watermark.show(); $("wmTitle").focus(); });
+  on($("wmBack"), "click", showCatalog);
   on($("gifDrop"), "click", () => $("gifFile").click());
   on($("gifReplace"), "click", () => $("gifFile").click());
   on($("gifFile"), "change", (event) => choose(event.target.files[0]));
@@ -417,6 +431,7 @@ function mount(root) {
     disposed = true;
     disposeBackground();
     disposeDesign();
+    watermark.dispose();
     stopWorker();
     controller.abort();
     if (previewURL) URL.revokeObjectURL(previewURL);
